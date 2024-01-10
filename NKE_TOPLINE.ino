@@ -56,6 +56,10 @@ void OnN2kOpen() {
 double heading=0;
 
 nke Nke;
+
+
+static NkeData value;
+
 void setup() {
   
   // Initialize serial
@@ -109,6 +113,7 @@ void setup() {
     int16_t heading=(((response[0]&0xff)<<8 ) | (response[1] & 0xff));
     printf("Heading %d\n",heading);
   });
+
 
   /*Nke.add_decoder(0x73, [](uint8_t request,uint8_t* response){
     printf("Trim %d\n",handle_angle(response));
@@ -212,11 +217,83 @@ void setup() {
     std::function<void(double)> m_func;
   };
 
+
+
   //NkeCompassHandler compassHandler;
   auto compassHandler=std::make_shared<NkeCompassHandler>([&heading](double head){
     heading=head;
   });
   NkeTopline.AddHandler(compassHandler);
+  
+  class GenericHandler : public NkeHandler
+  {
+    public: 
+    GenericHandler(uint8_t stubid,uint16_t data=0x00) //std::function<void(uint8_t data*)> func = nullptr)
+    : NkeHandler(stubid)
+    {
+      m_data.data[0]=(data>>8)&0xff;
+      m_data.data[1]=data&0xff;
+    }
+
+    void setData(uint8_t *data)
+    {
+      memcpy(m_data.data,data,2);
+    }
+
+  void handle(const NkeMessage &msg) override 
+  {
+    
+      Serial.printf("Generic value %02x values %02x %02x\n",msg.cmd,msg.data[0],msg.data[1]);
+      /*
+      if (m_func) {
+        uint16_t heading=msg.data[0]<<8|msg.data[1]&0xff;
+        const double pi=3.141592;
+        double rad=((heading*pi)/180.0);
+        m_func(rad);
+      }*/
+      uint16_t data=msg.data[0]<<8|msg.data[1]&0xff;
+      data++;
+      m_data.data[0]=(data>>8)&0xFF;
+      m_data.data[1]=data&0xFF;
+
+    }
+
+    NkeData *data() 
+    {
+      return &m_data;
+    }
+    private:
+    NkeData m_data;
+    //todo make a lambda for "manipulating data"
+    //std::function<
+  };
+
+  auto genericHandler19=std::make_shared<GenericHandler>(0x19);
+  auto genericHandler3d=std::make_shared<GenericHandler>(0x3d);
+
+  //recieve and send genericHandler
+  //NkeTopline.AddHandler(genericHandler19);
+  //NkeTopline.AddHandler(genericHandler3d);
+
+  //Findings 
+  // 18 fast wind speed? TODO check (fast is 1X so probably)
+  // 3B app wind speed slow
+  // asuming 18 is fast wind speed.
+
+  //fc command is for device.. so fc 3b write 1 byte to reg 1b ? fc  3b 01 1b ff //1b should ack this command with 0x00 it seems.. so now we know command structure.. 
+  //FC -> Dest -> reg + data ? .. ack with 00 ? 
+
+  auto genericHandler3b=std::make_shared<GenericHandler>(0x3b,0x20);
+  NkeTopline.addSendData(genericHandler3b->id(),genericHandler3b->data());
+
+  // 0x3c aparent wind angle!
+  auto genericHandler3c=std::make_shared<GenericHandler>(0x3c,0x10);
+  NkeTopline.addSendData(genericHandler3c->id(),genericHandler3c->data());
+
+  //auto genericHandler3d=std::make_shared<GenericHandler>(0x3d);
+
+  //NkeTopline.addSendData(genericHandler->id(),genericHandler->data());
+  //NkeTopline.addSendData(genericHandler->id(),genericHandler->data());
 
 
   NkeTopline.Open();
@@ -259,80 +336,6 @@ void loop() {
   SendN2kHeading();
   NMEA2000.ParseMessages();
   NkeTopline.ParseMessages();
-  
-  //first scan request on line is allways 0x2.
-  constexpr uint8_t initial=0x2;
-
-  //last scan request on line is allways 0xee
-  constexpr uint8_t last=0xee;
-  //check nke ptr outside of loop to save time
-  /*while (Serial2.available() > 0) {
-    //try reading a chunk
-    //if (nke_ptr)
-    //{
-    static uint32_t init_list[512];
-    static int count=0;
-    static bool init=false;
-    static uint8_t expected=initial;
-    static int frame_count=0;
-    uint8_t var=(uint8_t)Serial2.read();
-    if (var == 0xF0) {
-      printf("found %02x\n",var);
-      init=true;
-      continue;
-      //allwats expect the second controller to be the first to reply
-    }
-    if (init)
-    {
-      init_list[count++]=var;
-      //need a state machine for this!
-      if (var == expected) {
-        expected++;
-        continue;
-      } else {
-        frame_count++;
-        if (frame_count==2) {
-          frame_count=0;
-          printf("found device at %02x\n",expected-1);
-        }
-      }
-
-      if (expected >= last)
-      {
-        for (int i=0;i<count;i++)
-        {
-          if (i%16==0)
-            printf("\n");
-          printf("%02x ",init_list[i]);
-
-        }
-        printf("\n");
-        init=false;
-      }
-      //printf(%02x)
-    } else 
-    {
-      static int counter;
-      printf("%02x ",var);
-      if ((counter++%16)==0)
-      {
-        printf("\n");
-      }
-    }
-      //Nke.protocol_decoder((uint8_t)Serial2.read());
-      //String data=Serial2.read()
-    //}
-    //nke_protocol_decoder((uint8_t)Serial2.read());
-    //data on NKE bus
-    //send to decoder
-    //Serial.write(Serial2.read());
-
-  }*/
-
-  //only do nke for now
-  //if (Serial.available()) {
-  //  Serial2.write(Serial.read());
-  //}
 }
 
 

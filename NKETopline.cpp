@@ -15,8 +15,9 @@
 
   void tNKETopline::Open()
   {
-    m_serial.begin(9600, SERIAL_8N1, m_rxpin, m_txpin,false,2);    //Hardware Serial of ESP32
-    m_serial.setRxTimeout(2);
+    //todo DO SOME MORE BUS ANALASYS/ USE LOGIC PROBES ?
+    m_serial.begin(9600, /*SERIAL_8N2*/SERIAL_8E1, m_rxpin/*, -1*//*m_txpin*/);    //Hardware Serial of ESP32
+    m_serial.setRxTimeout(1);
     //TODO limit what the ISR acesses
     m_serial.onReceive([this](void){
       size_t available = m_serial.available();
@@ -24,6 +25,9 @@
         receiveByte(m_serial.read());
       }
     });
+
+    //TODO check if it matters if its 8S1 vs 8N1 as long as we use write(byte,parity)
+    m_serialTx.begin(9600,SWSERIAL_8S1,-1,m_txpin);
   }
 
   void tNKETopline::ParseMessages()
@@ -80,6 +84,9 @@
       case State::FRAME:
         frame_count=0;
         break;
+      case State::FAIL:
+
+        break;
     }
     m_state=state;
   }
@@ -114,12 +121,21 @@
     {
       detect=false;
       expected++;
+      auto nkeData=nkeDataArray[byte];
+      if (nkeData != nullptr)
+      {
+        Serial.printf("Announcing %02x\n",byte);
+        m_serialTx.write(nkeData->data[0],PARITY_SPACE);
+        m_serialTx.write(nkeData->data[1],PARITY_SPACE);
+      }
     }
     else {
       detect=true;
       //detect_count=0;
       detected=expected - 1; 
     }
+
+    //emulate speed
 
     //TODO if we have an output anounce it here..
 
@@ -129,6 +145,14 @@
    {
     if (count == 0) {
       cmd=byte;
+      auto nkeData=nkeDataArray[cmd];
+      //TODO send out side of interrupt handler
+      if (nkeData != nullptr)
+      {
+          m_serialTx.write(nkeData->data[0],PARITY_SPACE);
+          m_serialTx.write(nkeData->data[1],PARITY_SPACE);
+      }
+
       if (cmd == 0xfc) {
         setState(State::INTER_FRAME);
       }
@@ -148,15 +172,7 @@
     if (count >= 3) {
       NkeMessage msg;
       msg.cmd=cmd;
-      //memcpy(msg.data,data,2);
-      for (int i=0;i<2;i++) {
-        msg.data[i]=data[i];
-      }
-      //can we send zero ?
-      if (cmd == 0x19)
-      {
-        debug_frame("Compass from isr");
-      }
+      memcpy(msg.data,data,2);
 
       //TODO add msg filter here!!
       BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -187,9 +203,7 @@
 
   void tNKETopline::inter_frame(uint8_t byte)
   {
-    static uint8_t expected_sync=0xbb;
     static uint8_t function_count=0;
-
     if (count ==0)
     {
       cmd=byte;
@@ -198,9 +212,76 @@
     { 
       data[(count++)-1]=byte;
     }
+
+    switch(cmd)
+    {
+      //bb issued by controller with 2 byte payload.. 
+      //can bb only be the first of the two control frame
+      case 0xbc:
+        Serial.printf("0xBC received\n");
+      case 0xbb:
+        if (count == 3){
+          function_count++;
+          count=0;
+        }
+        break;
+      case 0xf4:
+      //F4 means WRITE!!!
+      case 0xfc:
+      //FC means read!!
+      //protocol does write read verify ... from the looks of things.
+      //fc requires emulators to "REPLY"
+      case 0xf1:
+        if (count == 3)
+        {
+          auto fc_target=data[0];
+          auto fc_command=data[1];
+          auto nkeData=nkeDataArray[fc_target];
+          if (nkeData != nullptr)
+          {
+            //fc_command means:
+            //get version!!
+            //0 is 1 on first byte major second byte is minor
+            if (fc_command)
+            m_serialTx.write(0x00,PARITY_SPACE); //ack command!
+            m_serialTx.write(0x00,PARITY_SPACE); //ack command!
+          }
+          
+        }
+        if (count == 5)
+        {
+          debug_frame("Function Command :");
+          function_count++;
+          count=0;
+        }
+        break;
+      default:
+        if (cmd < 0x10)
+        {
+          function_count++;
+          count=0;
+        } else  {
+          if (count == 4)
+          {
+            debug_frame("Unhandled Intra :");
+            function_count++;
+            count=0;
+            //we are not working..
+            setState(State::FAIL);
+
+          }
+        }
+        break;
+    }
+
+    if (function_count == 2){
+          function_count=0;
+          setState(State::FRAME);
+    }
+
     //00 01 //01 02 //etc sequence when controllers > 1
     //else allways 00 00 
-    if (cmd < 10) {
+    /*if (cmd < 10) {
       //if we are next controller deal with it .. otherwise ignore..
       if (count==2) {
         //if data==fc.. deal with command
@@ -235,6 +316,22 @@
     else if (cmd == 0xfc)
     {
       //FC + UPCode + 3 byte payload
+      if (count == 2 )
+      {
+        //if (data[1])
+        auto fc_target=data[0];
+        auto fc_command=data[1];
+        auto nkeData=nkeDataArray[fc_target];
+
+        //ack command!!
+        if (nkeData != nullptr) 
+        {
+        m_serialTx.write(0x00,PARITY_SPACE);
+        //ack fc command 
+        Serial.printf("Ack fc command for target %02x with reg payload %02x\n",fc_target,fc_command);
+        }
+
+      }
       if (count == 5) {
         //setState(State::FAIL);
         debug_frame("Function Command :");
@@ -259,7 +356,7 @@
         count=0;
       }
       //Serial.printf("Unknown inter_frame_type %02x", inter_frame_type);
-    }
+    }*/
   }
   void tNKETopline::print_buf()
   {
@@ -282,6 +379,7 @@
     //RX buffer for analysis
     uint8_t old;
     if (buf.isFull()) {
+      //print_buf();
       buf.pop(old);
     }
 
@@ -292,8 +390,10 @@
     {
       case State::UNKNOWN:
         if (prev == 0x00 && byte == 0xF0)
+          Serial.printf("Sync Detected\n");
           setState(State::INIT);
         //if sync pattern.. jump to INTER FRAME
+
         if ((prev == 0xbc | prev == 0xbb) && byte == 0x00) {  
           count=2;
           cmd=prev;
@@ -315,7 +415,7 @@
         function(data);
         break;*/
       case State::FAIL:
-        print_buf();
+        //print_buf();
         setState(State::UNKNOWN);
       //case State::SYNC_LOST:
       //  find_sync(data);

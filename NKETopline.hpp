@@ -6,7 +6,8 @@
 
 #include <RingBuf.h>
 
-#include <HardwareSerial.h>
+#include <SoftwareSerial.h>
+//#include <HardwareSerial.h>
 #include <vector>
 #include <string>
 #include <map>
@@ -37,6 +38,13 @@ struct NkeMessage
   uint8_t dummy;
 };
 
+  class NkeData
+  {
+    public:
+    uint8_t id;
+    uint8_t data[2];
+  };
+
 class NkeHandler
 {
   public:
@@ -66,7 +74,6 @@ class tNKETopline
 
     tNKETopline(const tNKETopline &) = delete; // no copying
     tNKETopline &operator=(const tNKETopline &) = delete;
-  //singleton pattern for access..
     static tNKETopline &getInstance() { 
     static tNKETopline instance(NKE_TOPLINE_SERIAL,NKE_TOPLINE_RXD,NKE_TOPLINE_TXD);
 
@@ -87,8 +94,31 @@ class tNKETopline
     //copy handler into map..
     m_handlers[h->id()]=h;
   }
+
+
+
+  //TDOO make thread safe
+  void addSendData(uint8_t reg, NkeData *data)
+  {
+    nkeDataArray[reg]=data;
+  };
   private:
+  //a device has potentially multiple data points in the bus.
+  //todo call handler with key + data
   std::map<uint8_t,std::shared_ptr<NkeHandler>> m_handlers;
+  //std::map<NkeDevice>
+
+  //we should have a spinlock here!!
+  
+
+
+  //maks is EE.. so maybe reduce this at some point
+  //std::array<NkeData*,256> nkeData; //initialized to zero
+
+  //initialize all handlers to nullptr
+  //constexpr auto nkeDataArray = []{
+  std::array<NkeData*, 256> nkeDataArray{};
+
   //these are all in ISR context!!!
   void receiveByte(uint8_t data);
   void setState(State s);
@@ -102,6 +132,8 @@ class tNKETopline
 
   std::string state2String(State);
   HardwareSerial &m_serial;
+  EspSoftwareSerial::UART m_serialTx;
+
   State m_state=State::UNKNOWN;
   int8_t m_rxpin;
   int8_t m_txpin;
@@ -117,7 +149,7 @@ class tNKETopline
   uint8_t data[5];
   int count=0;
 
-  void debug_frame(const std::string &msg);
+  void debug_frame(const std::string &msg);  
 };
 
 extern  tNKETopline &NkeTopline;
