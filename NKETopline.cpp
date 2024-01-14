@@ -328,6 +328,7 @@ void tNKETopline::inter_frame(uint8_t byte)
         count = 0;
         // we are not working..
         setState(State::FAIL);
+        return;
       }
     }
     break;
@@ -337,6 +338,7 @@ void tNKETopline::inter_frame(uint8_t byte)
   {
     function_count = 0;
     setState(State::FRAME);
+    return;
   }
 
   // 00 01 //01 02 //etc sequence when controllers > 1
@@ -450,10 +452,11 @@ void tNKETopline::receiveByte(uint8_t byte)
   switch (m_state)
   {
   case State::UNKNOWN:
-    if (prev == 0x00 && byte == 0xF0)
+    if (prev == 0xF0 && byte == 0x02)
     {
       Serial.printf("Sync Detected\n");
       setState(State::INIT);
+      init(byte);
       break;
     }
     // if sync pattern.. jump to INTER FRAME
