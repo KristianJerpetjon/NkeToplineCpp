@@ -28,12 +28,13 @@
 #define NKE_TOPLINE_TXD 17
 #endif
 
+/*
 struct NkeMessage
 {
   uint8_t cmd;
   uint8_t data[2];
   uint8_t dummy;
-};
+};*/
 
 static inline void uint16ToChars(uint16_t in, uint8_t *out)
 {
@@ -94,7 +95,7 @@ public:
   {
     m_devices.push_back(dev);
     m_dev_table[dev->id()] = dev.get();
-    Serial.printf("Adding %02x %p\n",dev->id(),dev.get());
+    Serial.printf("Adding %02x %p\n", dev->id(), dev.get());
     if (dev->fast_id() != 0)
     {
       m_dev_table[dev->fast_id()] = dev.get();
@@ -104,7 +105,7 @@ public:
 private:
   std::map<uint8_t, std::shared_ptr<NkeHandler>> m_handlers;
   std::vector<std::shared_ptr<NkeDevice>> m_devices;
-  //TODO store as reference wrappers instead of pointers ? 
+  // TODO store as reference wrappers instead of pointers ?
   std::array<NkeDevice *, 256> m_dev_table{};
 
   // these are all in ISR context!!!

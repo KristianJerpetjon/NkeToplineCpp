@@ -1,11 +1,12 @@
 #include "NKETopline.hpp"
+#include "NkeMessage.hpp"
 
 #include <map>
 
 tNKETopline &NkeTopline = tNKETopline::getInstance();
 
 tNKETopline::tNKETopline(HardwareSerial &serial, int8_t rxpin, int8_t txpin)
-    : m_serial(serial), m_rxpin(rxpin), m_txpin(txpin), m_rxQueue(xQueueCreate(128, sizeof(NkeMessage)))
+    : m_serial(serial), m_rxpin(rxpin), m_txpin(txpin), m_rxQueue(xQueueCreate(128, sizeof(Nke::_Message)))
 {
 }
 
@@ -30,20 +31,22 @@ void tNKETopline::ParseMessages()
 {
   while (uxQueueMessagesWaiting(m_rxQueue) > 0)
   {
-    NkeMessage msg;
+    Nke::_Message msg;
     auto ret = xQueueReceive(m_rxQueue, &msg, 0);
-    // Serial.printf("Received cmd %02x data %02x%02x\n",msg.cmd,msg.data[0],msg.data[1]);
+
+    // find handler in handlers ? or just call callback.. think the latter is even better
+    //  Serial.printf("Received cmd %02x data %02x%02x\n",msg.cmd,msg.data[0],msg.data[1]);
 
     // Serial.printl()
     // if we fail to read msg return
     if (ret == pdFALSE)
       return;
-    auto it = m_handlers.find(msg.cmd);
+    auto it = m_handlers.find(msg.channel);
     if (it != m_handlers.end())
     {
       std::shared_ptr<NkeHandler> handler = it->second;
-      uint16_t data=charToUint16(msg.data);
-      handler->handle(data);
+      // uint16_t data = charToUint16(msg.data);
+      handler->handle(msg);
     }
     // Dont do anything just empty queue
   }
@@ -189,10 +192,16 @@ void tNKETopline::frame(uint8_t byte)
 
   if (count >= 3)
   {
-    NkeMessage msg;
-    msg.cmd = cmd;
+    // NkeMessage msg;
+    // ok lets put more stuff into this as wel go
+    Nke::_Message msg;
+    msg.channel = cmd;
+    msg.len = 2;
     memcpy(msg.data, data, 2);
-
+    /*
+        msg.cmd = cmd;
+        memcpy(msg.data, data, 2);
+    */
     // TODO add msg filter here!!
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
