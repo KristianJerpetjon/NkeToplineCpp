@@ -20,6 +20,8 @@
 
 #include <Preferences.h>
 #include <memory>
+#include <list>
+
 
 #define SlowDataUpdatePeriod 1000 // Time between CAN Messages sent
 Preferences preferences;          // Nonvolatile storage on ESP32 - To store LastDeviceAddress
@@ -352,6 +354,9 @@ void setup()
   */
   NkeTopline.addDevice(std::make_shared<NkeDevice>(0x30, 1, 9));
 
+  NkeTopline.addDevice(std::make_shared<NkeDevice>(0x02, 5, 5));
+
+
   auto speed = std::make_shared<Nke::BoatSpeed>(bridge);
   // NkeTopline.addDevice(std::make_shared<Nke::Speed>(0x3b, 2, 0, 0x18)); // also fast device
   NkeTopline.addDevice(speed); // also fast device
@@ -500,9 +505,66 @@ void N2KRun()
   }
 }
 
+void sendCommand(uint8_t command,uint8_t dev,uint8_t reg,std::list<uint8_t> data)
+{
+  tNkeMsg msg;
+  int len=0;
+  msg.channel=command;
+  msg.data[len++]=dev;
+  msg.data[len++]=reg;
+  //todo do a max check
+  for (auto &a :data)
+  {
+    msg.data[len++]=a;
+  }
+  msg.len=len;
+  NkeTopline.sendCommand(msg);
+
+}
+
 void loop()
 {
   NkeTopline.ParseMessages();
+  if (Serial.available() > 0)
+  {
+      String data = Serial.readStringUntil('\n');
+      if (data == "ON")
+      {
+        //send autopilot on
+
+      }
+
+      if (data =="OFF")
+      {
+        //send autopilot off
+      }
+
+      if (data == "RUDDER")
+      {
+        Serial.printf("Sending Rudder to NkeTopline\n");
+        sendCommand(0xf4,0x4f,0x1,{0x00,0x02});
+        sendCommand(0xfc,0x4f,0x1,{});
+        /*tNkeMsg msg;
+        msg.channel=0xf4;
+        //was 4e the other controller ? 
+
+        //send write command to f4 to write into reg 01 the value 00 02 (02 is rudder mode) TODO move this to an autopilot controller class
+        msg.data={0x4f,0x01,00,02};
+        msg.len=4;
+        NkeTopline.sendCommand(msg);
+        //perform read back
+        msg.channel=0xfc;
+        msg.data={0x4f,0x01};
+        msg.len=2;
+        NkeTopline.sendCommand(msg);*/
+      }
+
+      if (data == "APARENT")
+      {
+
+      }
+  }
+
   // N2KRun();
 }
 

@@ -6,7 +6,7 @@
 tNKETopline &NkeTopline = tNKETopline::getInstance();
 
 tNKETopline::tNKETopline(HardwareSerial &serial, int8_t rxpin, int8_t txpin)
-    : m_serial(serial), m_rxpin(rxpin), m_txpin(txpin), m_rxQueue(xQueueCreate(128, sizeof(Nke::_Message)))
+    : m_serial(serial), m_rxpin(rxpin), m_txpin(txpin), m_rxQueue(xQueueCreate(128, sizeof(Nke::_Message))), m_cmdQueue(xQueueCreate(128, sizeof(Nke::_Message)))
 {
 }
 
@@ -100,6 +100,7 @@ void tNKETopline::sendDevice(uint16_t data)
   m_serialTx.write(data & 0xFF, PARITY_SPACE);
 }
 
+// todo make init care about "_ or high parity !!"
 void tNKETopline::init(uint8_t byte)
 {
   const uint8_t start = 0x2;
@@ -114,8 +115,26 @@ void tNKETopline::init(uint8_t byte)
   if (detect)
   {
     detect = false;
-    if (detected == end)
+    /* if (detected == end)
+     {
+       setState(State::FRAME);
+       Serial.printf("Found %d devices\n", m_detected.size());
+       for (auto dev : m_detected)
+       {
+         Serial.printf(" %02x", dev);
+       }
+       Serial.println();
+
+       return;
+     }*/
+    m_detected.push_back(detected);
+  }
+  else if (byte == expected)
+  {
+    // dont know if ee can exist but if not then after EE its intra frame to begin with either 00 00 or 00 + first slave
+    if (expected == end)
     {
+      count = 0;
       setState(State::FRAME);
       Serial.printf("Found %d devices\n", m_detected.size());
       for (auto dev : m_detected)
@@ -123,13 +142,8 @@ void tNKETopline::init(uint8_t byte)
         Serial.printf(" %02x", dev);
       }
       Serial.println();
-
       return;
     }
-    m_detected.push_back(detected);
-  }
-  else if (byte == expected)
-  {
     detect = false;
     expected++;
     auto dev = m_dev_table[byte];
@@ -170,9 +184,14 @@ void tNKETopline::frame(uint8_t byte)
         sendDevice(dev->data());
     }
 
-    if (cmd == 0xfc)
+    if (cmd == 0xfc | cmd == 0xF1 | cmd == 0xF4)
     {
-      setState(State::INTER_FRAME);
+      // a controller thats not master has sendt a command at the end of the intra frame
+      if (frame_count == 0)
+      {
+        function_count++;
+        setState(State::INTER_FRAME);
+      }
     }
     // command is from a controller .. in the wrong state
     if (cmd < 0x10)
@@ -217,13 +236,17 @@ void tNKETopline::frame(uint8_t byte)
   if (frame_count == 10)
   {
     setState(State::INTER_FRAME);
+    // reset on frame completion what the active controller is.. asumption is only master can send at start of intra frame
+    // Not done in the setState because of the fx command following controller at the end resulting in an error.
+    // we could also do a detect not fx or 0x to return to frame state.. might be a better design
+    m_active_controller = 0x00;
   }
 }
 
 void tNKETopline::debug_frame(const std::string &msg)
 {
   Serial.printf("DEBUG %s ", msg.c_str());
-  Serial.printf("cmd %02x ", cmd);
+  Serial.printf("cmd %02x ", channel);
   for (int i = 1; i < count; i++)
   {
     Serial.printf(" %02x", data[i - 1]);
@@ -231,9 +254,247 @@ void tNKETopline::debug_frame(const std::string &msg)
   Serial.println();
 }
 
+void tNKETopline::handle_channel()
+{
+  // one byte received
+  if (count == 1)
+  {
+    auto dev = m_dev_table[channel];
+    // TODO send out side of interrupt handler
+    if (dev != nullptr)
+    {
+      if (dev->isFast(channel))
+        sendDevice(dev->fastData());
+      else
+        sendDevice(dev->data());
+    }
+  }
+
+  if (count >= 3)
+  {
+    // NkeMessage msg;
+    // ok lets put more stuff into this as wel go
+
+    // TODO filter on channel to see if we have to send at all
+    if (m_handler_table[channel] == 0xFF)
+    {
+      Nke::_Message msg;
+      msg.channel = channel;
+      msg.len = 2;
+      memcpy(msg.data, data, 2);
+      /*
+          msg.cmd = cmd;
+          memcpy(msg.data, data, 2);
+      */
+      // TODO add msg filter here!!
+      BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+      xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
+    }
+    /* if (xHigherPriorityTaskWoken)
+     {
+
+     }*/
+    // if we have a listener..
+    // frame_count++;
+    count = 0;
+  }
+}
+
+void tNKETopline::handle_bx()
+{
+  switch (channel)
+  {
+  case 0xb9:
+  case 0xba:
+  case 0xbb:
+  case 0xbc:
+    if (count == 3)
+    {
+      // debug_frame("bx :");
+      Serial.printf("bx %02x, %02x, %02x\n", channel, data[0], data[1]);
+      // function_count++;
+      count = 0;
+    }
+    break;
+  default:
+    Serial.printf("WARNING unknown bx %02x, %02x, %02x\n", channel, data[0], data[1]);
+    break;
+  }
+}
+
+void tNKETopline::handle_functions()
+{
+  switch (channel)
+  {
+  case 0xf4:
+    // F4 means WRITE!!!
+    if (count == 5)
+    {
+      auto id = data[0];
+      auto reg = data[1];
+      auto dev = m_dev_table[id];
+      if (dev != nullptr)
+      {
+        if (reg < NkeDevice::max_regs)
+        {
+          dev->reg[reg] = charToUint16(&data[2]);
+        }
+      }
+      debug_frame("write:");
+      //  if (m_active_controller == 0x00 ) // if not master dont count the frame also verify that master only can occupy the timeslot
+      //    function_count++;
+      count = 0;
+    }
+    break;
+    // FC means read!!
+
+  case 0xfc:
+    if (count == 3)
+    {
+      auto id = data[0];
+      auto reg = data[1];
+      auto dev = m_dev_table[id];
+      if (dev != nullptr)
+      {
+        if (reg < NkeDevice::max_regs)
+        {
+          sendDevice(dev->reg[reg]);
+        }
+      }
+    }
+    if (count == 5)
+    {
+      debug_frame("Read:");
+      count = 0;
+    }
+    break;
+  // protocol does write read verify ... from the looks of things.
+
+  // fc requires emulators to "REPLY"
+  case 0xf1:
+
+    if (count == 2)
+    {
+      auto id = data[0];
+      auto dev = m_dev_table[id];
+      if (dev != nullptr)
+      {
+        sendDevice(dev->version());
+        // why the 0x40 ?
+        m_serialTx.write(0x40, PARITY_SPACE);
+      }
+    }
+    if (count == 5)
+    {
+      debug_frame("F1 Command :");
+      count = 0;
+    }
+    break;
+  case 0xFF:
+    Serial.printf("Lost sync\n");
+    print_buf();
+    setState(State::UNKNOWN);
+    break;
+
+  default:
+    if (count == 5)
+    {
+      debug_frame("Unhandled Intra :");
+      // function_count++;
+      count = 0;
+      // we are not working..
+      // setState(State::FAIL);
+    }
+  }
+}
+
+void tNKETopline::sendFx(const Nke::_Message &msg)
+{
+  if (msg.len > 0)
+  {
+    // i have no idea if this is correct
+    m_serialTx.write(msg.channel, PARITY_MARK);
+    for (auto i = 0; i < msg.len; i++)
+    {
+      // send data not as "controller"
+      m_serialTx.write(msg.data[i], PARITY_SPACE);
+    }
+    // for(auto &c : msg.data)
+  }
+}
+
+void tNKETopline::handle_controllers()
+{
+  // auto id = data[0];
+  if (count == 1)
+  {
+    auto dev = m_dev_table[channel];
+    if (dev != nullptr)
+    {
+      // do we care ?
+      // Serial.printf("Checking sendBox\n");
+      BaseType_t xTaskWokenByReceive = pdFALSE;
+      Nke::_Message msg;
+      if (uxQueueMessagesWaitingFromISR(m_cmdQueue) > 0)
+      {
+        if (xQueueReceiveFromISR(m_cmdQueue,
+                                 (void *)&msg,
+                                 &xTaskWokenByReceive))
+        {
+          // Serial.printf("Sending Msg\n");
+
+          // perform read fc command
+          sendFx(msg);
+          // sendDevice(dev->version());
+          //  why the 0x40 ?
+          // m_serialTx.write(0x40, PARITY_SPACE);
+        }
+      }
+    }
+    // if
+  }
+  count = 0;
+}
+
+// TODO check mark and space of incoming data..!!
+void tNKETopline::channel_decoder(uint8_t byte, int mark)
+{
+  if (count == 0)
+  {
+    // TODO check that MARK is correct for controller
+    channel = byte;
+  }
+  else
+  {
+    // maybe it should all be in data ?
+    data[count - 1] = byte;
+  }
+  count++;
+
+  if (channel >= 0xF0)
+  {
+    handle_functions();
+  }
+  else if (channel <= 0xBF && channel > 0xb0)
+  {
+    handle_bx();
+  }
+  else if (channel < 0x10)
+  {
+
+    handle_controllers();
+    // TODO if we have a controller send data..
+    // if command in command queue send it if we are controller cmd
+  }
+  else
+  {
+    // maybe split in handle fast channel and handle slow at some point
+    handle_channel();
+  }
+}
+
 void tNKETopline::inter_frame(uint8_t byte)
 {
-  static uint8_t function_count = 0;
   if (count == 0)
   {
     cmd = byte;
@@ -246,7 +507,7 @@ void tNKETopline::inter_frame(uint8_t byte)
 
   switch (cmd)
   {
-  // bb issued by controller with 2 byte payload..
+  // bb issued by controller with 2 byte payload but what is it.. some contain other things so maybe we should study this more..
   // can bb only be the first of the two control frame
   case 0xb9:
   case 0xba:
@@ -255,6 +516,7 @@ void tNKETopline::inter_frame(uint8_t byte)
     if (count == 3)
     {
       // debug_frame("bx :");
+      Serial.printf("bx %02x, %02x, %02x\n", cmd, data[0], data[1]);
       function_count++;
       count = 0;
     }
@@ -274,7 +536,8 @@ void tNKETopline::inter_frame(uint8_t byte)
         }
       }
       debug_frame("write:");
-      function_count++;
+      if (m_active_controller == 0x00) // if not master dont count the frame also verify that master only can occupy the timeslot
+        function_count++;
       count = 0;
     }
     break;
@@ -295,7 +558,8 @@ void tNKETopline::inter_frame(uint8_t byte)
     if (count == 5)
     {
       debug_frame("Read:");
-      function_count++;
+      if (m_active_controller == 0x00) // if not master dont count the frame also verify that master only can occupy the timeslot
+        function_count++;
       count = 0;
     }
     break;
@@ -318,13 +582,26 @@ void tNKETopline::inter_frame(uint8_t byte)
     if (count == 5)
     {
       debug_frame("F1 Command :");
-      function_count++;
+      if (m_active_controller == 0x00) // if not master dont count the frame also verify that master only can occupy the timeslot
+      {
+        function_count++;
+      }
       count = 0;
     }
     break;
   default:
     if (cmd < 0x10)
     {
+      if (cmd == 0)
+      {
+        Serial.printf("Master 00\n");
+      }
+      else
+      {
+        Serial.printf("Slave %d\n", cmd);
+      }
+      m_active_controller = cmd;
+      // Serial.printf("Handled control from %d\n",)
       function_count++;
       count = 0;
     }
@@ -468,15 +745,18 @@ void tNKETopline::receiveByte(uint8_t byte)
       init(byte);
       break;
     }
-    // if sync pattern.. jump to INTER FRAME
-
+    // if sync pattern.. jump to Framing
     if ((prev == 0xbc | prev == 0xbb | prev == 0xba | prev == 0xb9) && byte == 0x00)
     {
-      count = 2;
+      channel = prev;
+      data[0] = byte;
+      setState(State::FRAME);
+      break;
+      /*count = 2;
       cmd = prev;
       data[0] = byte;
       setState(State::INTER_FRAME);
-      break;
+      break;*/
     }
     prev = byte;
     break;
@@ -484,7 +764,8 @@ void tNKETopline::receiveByte(uint8_t byte)
     init(byte);
     break;
   case State::FRAME:
-    frame(byte);
+    channel_decoder(byte);
+    // frame(byte);
     break;
   case State::INTER_FRAME:
     inter_frame(byte);

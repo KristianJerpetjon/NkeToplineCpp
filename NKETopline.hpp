@@ -88,6 +88,7 @@ public:
   {
     // copy handler into map..
     m_handlers[handler->id()] = handler;
+    m_handler_table[handler->id()]=0xFF; //ff means there is a handler for this id..
   }
 
   // TODO make thread safe
@@ -102,11 +103,28 @@ public:
     }
   };
 
+  bool sendCommand(const Nke::_Message &msg)
+  {
+    //try sending and dont wait
+    return xQueueSend( m_cmdQueue,
+                       ( void * ) &msg,
+                       ( TickType_t ) 0 ) == pdPASS;
+  }
+
 private:
   std::map<uint8_t, std::shared_ptr<NkeHandler>> m_handlers;
   std::vector<std::shared_ptr<NkeDevice>> m_devices;
+  //std::queue<Nke::_Message> 
+  //is there any point in being more than one controller in the network ? ..
+  //my guess is not!
+  //todo change these to use xqueues
+  //std::deque<Nke::_Message> m_command_queue;
+  //std::deque<Nke::_Message> reply; //TODO ship replies over same queue as data ?  use nkehandler or similar
+
   // TODO store as reference wrappers instead of pointers ?
   std::array<NkeDevice *, 256> m_dev_table{};
+  std::array<uint8_t, 256> m_handler_table{};
+
 
   // these are all in ISR context!!!
   void receiveByte(uint8_t data);
@@ -128,6 +146,7 @@ private:
   int8_t m_rxpin;
   int8_t m_txpin;
   QueueHandle_t m_rxQueue;
+  QueueHandle_t m_cmdQueue;
 
   std::vector<uint8_t> m_detected;
 
@@ -141,6 +160,17 @@ private:
   int count = 0;
 
   void debug_frame(const std::string &msg);
+  uint8_t m_active_controller=0x00;
+  uint8_t function_count = 0;
+
+  void channel_decoder(uint8_t channel,int mark=0);
+  void handle_functions();
+  void handle_bx();
+  void handle_channel();
+  void handle_controllers();
+  void sendFx(const Nke::_Message &msg);
+  uint8_t channel;
+
 };
 
 extern tNKETopline &NkeTopline;
