@@ -13,7 +13,10 @@
 #define NKE_TOPLINE_RXD 16
 #define NKE_TOPLINE_TXD 17
 
+#include "NkeAutopilot.hpp"
 #include "NKETopline.hpp"
+
+#include "NavicoAp.hpp"
 
 // need to toggle some gpios
 // #include "driver/gpio.h"
@@ -21,7 +24,6 @@
 #include <Preferences.h>
 #include <memory>
 #include <list>
-
 
 #define SlowDataUpdatePeriod 1000 // Time between CAN Messages sent
 Preferences preferences;          // Nonvolatile storage on ESP32 - To store LastDeviceAddress
@@ -40,7 +42,11 @@ const int ledPin = 1;
 static int pinState = LOW;
 int LED_BUILTIN = 2;
 
-const unsigned long TransmitMessages0[] PROGMEM = {130306L, 127250L, 0};
+const unsigned long TransmitMessages0[] PROGMEM = {
+    130306L,
+    127250L,
+    127245L, // RUDDER priority 2 period 100ms
+    0};
 
 const unsigned long ReceiveMessages0[] PROGMEM = {/*126992L,*/ // System time
                                                                // 127250L, // Heading
@@ -123,6 +129,7 @@ const unsigned long TransmitMessages1[] PROGMEM = {127250L, 0};
 // how often does wind data get transmitted PGN has rules!
 tN2kSyncScheduler WindScheduler(false, 100, 500);
 tN2kSyncScheduler HeadingScheduler(false, 100, 600);
+tN2kSyncScheduler RudderScheduler(false, 100, 50);
 
 // *****************************************************************************
 // Call back for NMEA2000 open. This will be called, when library starts bus communication.
@@ -133,6 +140,7 @@ void OnN2kOpen()
   // TODO figure out a better way to schedule multiple messages..
   WindScheduler.UpdateNextTime();
   HeadingScheduler.UpdateNextTime();
+  RudderScheduler.UpdateNextTime();
 }
 
 double heading = 0;
@@ -147,6 +155,9 @@ static NkeBridge bridge;
 #include "N2KNkeHandler.hpp"
 
 #include <unordered_map>
+
+std::unique_ptr<NavicoAp> m_navico;
+
 // map for handlers of NkeDevices
 static const std::unordered_map<unsigned long, std::shared_ptr<N2kNkeHandler>> N2kHandlers = {
     {128259L, std::make_shared<HandleBoatSpeed>(bridge)},
@@ -170,9 +181,17 @@ void HandleNMEA2000Msg(const tN2kMsg &N2kMsg)
 
     // dev->handleN2kData(N2kMsg);
   }
+
+  if (m_navico != nullptr)
+  {
+    m_navico->HandleNMEA2000Msg(N2kMsg);
+  }
 }
 TaskHandle_t TaskNke;
 TaskHandle_t TaskN2k;
+TaskHandle_t TaskAp;
+
+std::unique_ptr<AutopilotController> m_auto;
 
 void setup()
 {
@@ -206,16 +225,14 @@ void setup()
   NMEA2000.SetN2kCANReceiveFrameBufSize(250);
   NMEA2000.SetN2kCANSendFrameBufSize(250);
 
-// we are emulating two devices
-#if defined(SECOND_DEVICE)
-
+  // we are emulating two devices
+  // second device is the m_navico_ap
   NMEA2000.SetDeviceCount(2);
-#endif
 
   // Set Product information
   NMEA2000.SetProductInformation("00000002",              // Manufacturer's Model serial code
                                  100,                     // Manufacturer's product code
-                                 "Simple wind monitor",   // Manufacturer's Model ID
+                                 "NKE N2K Bridge",        // Manufacturer's Model ID
                                  "1.2.0.24 (2022-10-01)", // Manufacturer's Software version code
                                  "1.2.0.0 (2022-10-01)",  // Manufacturer's Model version
                                  0xff,                    // load equivalency - use default
@@ -232,40 +249,14 @@ void setup()
                                 // 85, // Device class=External Environment. See codes on https://web.archive.org/web/20190531120557/https://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
                                 2046, // Just choosen free from code list on https://web.archive.org/web/20190529161431/http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf
                                 4,    // Marine
-                                1     // dev id
-  );
-
-#if defined(SECOND_DEVICE)
-  NMEA2000.SetProductInformation("00000002",              // Manufacturer's Model serial code
-                                 100,                     // Manufacturer's product code
-                                 "Nke Heading",           // Manufacturer's Model ID
-                                 "1.2.0.24 (2022-10-01)", // Manufacturer's Software version code
-                                 "1.2.0.0 (2022-10-01)",  // Manufacturer's Model version
-                                 0xff,                    // load equivalency - use default
-                                 0xffff,                  // NMEA 2000 version - use default
-                                 0xff,                    // Sertification level - use default
-                                 1                        /// dev id
-  );
-  // probably not so important.. maybe
-  //  Set device information https://manualzz.com/doc/12647142/nmea2000-class-and-function-codes
-  NMEA2000.SetDeviceInformation(id,  // Unique number. Use e.g. Serial number.
-                                130, // 150, // Device function Bridge
-                                25,  // intranetwork device
-
-                                // 130, // Device function=Atmospheric. See codes on https://web.archive.org/web/20190531120557/https://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
-                                // 85, // Device class=External Environment. See codes on https://web.archive.org/web/20190531120557/https://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
-                                2046, // Just choosen free from code list on https://web.archive.org/web/20190529161431/http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf
-                                4,    // Marine
                                 0     // dev id
   );
-
-  NMEA2000.ExtendTransmitMessages(TransmitMessages1, 1);
-  NMEA2000.ExtendReceiveMessages(ReceiveMessages1, 1);
-#endif
 
   // Maybe multi device is broken ?
   NMEA2000.ExtendTransmitMessages(TransmitMessages0, 0);
   NMEA2000.ExtendReceiveMessages(ReceiveMessages0, 0);
+
+  m_navico = std::unique_ptr<NavicoAp>(new NavicoAp(NMEA2000, id, 1));
 
   // Uncomment 2 rows below to see, what device will send to bus. Use e.g. OpenSkipper or Actisense NMEA Reader
   // Serial.begin(115200);
@@ -320,12 +311,82 @@ void setup()
   };
 
   // NkeCompassHandler compassHandler;
-  auto compassHandler = std::make_shared<NkeCompassHandler>([&heading](double head)
+  auto compassHandler = std::make_shared<NkeCompassHandler>([&bridge](double head)
                                                             { heading = head; });
 
-  NkeTopline.addHandler(compassHandler);
+  // NkeTopline.addHandler(compassHandler);
+  NkeTopline.addMsgHandler([&bridge](const Nke::_Message &msg)
+                           {
+    if (msg.channel == 0x19) {
+       if (msg.len==2) {
+          uint16_t data=msg.data[0]<<8|msg.data[1];
+          bridge.setHeading(data);
+        }
+      } });
 
-  // probably better if nkedata is default in nke handler.. also we need to deal with multiple!!
+  NkeTopline.addMsgHandler([&bridge](const Nke::_Message &msg)
+                           {
+    //17 is fixed at 180.. i wonder what that is.. 
+    //1e is rudder fast where 0x4xx means negative and 0xx means positive.. where 0x434 is close to zero .. and 400 is not. 
+    //need to find the decoding as the autopilot expects 359 as negative and 1 as positive integer.
+    if (msg.channel == 0x1e) { //asume its rudder fast
+      if (msg.len==2)
+      {
+        uint16_t data=msg.data[0]<<8|msg.data[1];
+        //bridge.setRunnerAngleNke(data);
+        bridge.setRunnerAngle(data);
+        /*
+        if (data > (180*3))
+        {
+          int computed=(data/3);
+          computed=-(360-computed);
+          Serial.printf("Rudder Angle %d\n",computed);
+
+        } else {
+          Serial.printf("Rudder Angle %d\n",(data/3));
+        }*/
+      }
+    } });
+
+  NkeTopline.addMsgHandler([&bridge](const Nke::_Message &msg)
+                           {
+    if (msg.channel == 0x4e) { //asume its rudder fast
+      if (msg.len==2) {
+        //Serial.printf("Pilot %02x,%02x,%02x\n",msg.channel,msg.data[0],msg.data[1]);
+        //constantly 01,66 ? why ? 
+      }
+    } });
+
+  NkeTopline.addMsgHandler([&bridge](const Nke::_Message &msg)
+                           {
+      //when active shows value of reg 11 if not FF (probably means no value or issued by master!)
+    if (msg.channel == 0x4f) { //asume its rudder fast
+      if (msg.len==2) {
+        //Serial.printf("Pilot %02x,%02x,%02x\n",msg.channel,msg.data[0],msg.data[1]);
+      }
+    } });
+
+  NkeTopline.addMsgHandler([&bridge](const Nke::_Message &msg)
+                           {
+    if (msg.channel == 0x41) { //asume its rudder fast
+      if (msg.len==2) {
+        //constantly FF at least in compass mode
+        //Serial.printf("Pilot %02x,%02x,%02x\n",msg.channel,msg.data[0],msg.data[1]);
+      }
+    } });
+
+  NkeTopline.addMsgHandler([&bridge](const Nke::_Message &msg)
+                           {
+      //when active shows value of reg 11 if not FF (probably means no value or issued by master!)
+    if (msg.channel == 0x50) { //asume its rudder fast
+      if (msg.len==2) {
+        //constantly FF at least in compass mode
+//        Serial.printf("Pilot %02x,%02x,%02x\n",msg.channel,msg.data[0],msg.data[1]);
+      }
+    } });
+
+  // shows up as id 2!!
+  //  probably better if nkedata is default in nke handler.. also we need to deal with multiple!!
 
   /*
   auto genericHandler19=std::make_shared<GenericHandler>(0x19);
@@ -355,7 +416,6 @@ void setup()
   NkeTopline.addDevice(std::make_shared<NkeDevice>(0x30, 1, 9));
 
   NkeTopline.addDevice(std::make_shared<NkeDevice>(0x02, 5, 5));
-
 
   auto speed = std::make_shared<Nke::BoatSpeed>(bridge);
   // NkeTopline.addDevice(std::make_shared<Nke::Speed>(0x3b, 2, 0, 0x18)); // also fast device
@@ -396,6 +456,7 @@ void setup()
   auto temp = std::make_shared<Nke::WaterTemp>(bridge);
 
   NkeTopline.addDevice(temp);
+
   // support multiple pgn's ?
   // todo one pgn to many as well ?
   // N2KHandlers.emplace(130310L, temp); ################
@@ -447,6 +508,11 @@ void setup()
 
   // NkeTopline.addSendData(genericHandler->id(),genericHandler->data());
   // NkeTopline.addSendData(genericHandler->id(),genericHandler->data());
+
+  // add auto pilot controller!
+  // m_auto=std::make_unique<AutopilotController(NkeTopline,bridge); //id is hard coded to 0x2.. maybe we need to work on that
+  m_auto = std::unique_ptr<AutopilotController>(new AutopilotController(NkeTopline, bridge));
+
   NMEA2000.SetOnOpen(OnN2kOpen);
   NkeTopline.Open();
 
@@ -454,6 +520,7 @@ void setup()
 
   // run nmea2k on core 0
   xTaskCreatePinnedToCore(N2Kloop, "N2K", 10000, NULL, 1, &TaskN2k, 0);
+  xTaskCreatePinnedToCore(ApLoop, "N2K", 10000, NULL, 1, &TaskAp, 1);
 
   // start listening on serial port 2 for NKE data
   // 9600 is more or les 1 character per millisecond what should the timeout be
@@ -490,7 +557,12 @@ void N2KRun()
   //  TODO
   //  SetN2kRudder send rudder info to nmea2k
   // SendN2kHeading(); //For some reason.. sending fails!!
+  SendN2kMessages();
   NMEA2000.ParseMessages();
+  if (m_navico != nullptr)
+  {
+    m_navico->process();
+  }
 
   int SourceAddress = NMEA2000.GetN2kSource();
   if (SourceAddress != NodeAddress)
@@ -505,48 +577,106 @@ void N2KRun()
   }
 }
 
-void sendCommand(uint8_t command,uint8_t dev,uint8_t reg,std::list<uint8_t> data)
+// need to move the senders to a class
+
+void SendN2kRudder()
+{
+  tN2kMsg N2kMsg;
+  static int count = 0;
+  if (RudderScheduler.IsTime())
+  {
+    SetN2kRudder(N2kMsg, bridge.rudderAngle().N2k());
+    NMEA2000.SendMsg(N2kMsg, 0);
+    RudderScheduler.UpdateNextTime();
+  }
+}
+void SendN2kMessages()
+{
+  SendN2kRudder();
+  SendN2kHeading();
+}
+
+void sendCommand(uint8_t command, uint8_t dev, uint8_t reg, std::list<uint8_t> data)
 {
   tNkeMsg msg;
-  int len=0;
-  msg.channel=command;
-  msg.data[len++]=dev;
-  msg.data[len++]=reg;
-  //todo do a max check
-  for (auto &a :data)
+  int len = 0;
+  msg.channel = command;
+  msg.data[len++] = dev;
+  msg.data[len++] = reg;
+  // todo do a max check
+  for (auto &a : data)
   {
-    msg.data[len++]=a;
+    msg.data[len++] = a;
   }
-  msg.len=len;
+  msg.len = len;
   NkeTopline.sendCommand(msg);
-
 }
 
 void loop()
 {
   NkeTopline.ParseMessages();
-  if (Serial.available() > 0)
+
+  // N2KRun();
+}
+
+void ApLoop(void *pvParameters)
+{
+  for (;;)
   {
+    if (Serial.available() > 0)
+    {
       String data = Serial.readStringUntil('\n');
+      if (data == "+1")
+      {
+        m_auto->change(1);
+      }
+
+      if (data == "+10")
+      {
+        m_auto->change(10);
+      }
+
+      if (data == "-1")
+      {
+        m_auto->change(-1);
+      }
+
+      if (data == "-10")
+      {
+        m_auto->change(-10);
+      }
+
       if (data == "ON")
       {
-        //send autopilot on
-
+        // send autopilot on
+        if (m_auto)
+        {
+          m_auto->start();
+        }
       }
 
-      if (data =="OFF")
+      if (data == "OFF")
       {
-        //send autopilot off
+        // send autopilot off
+        if (m_auto)
+        {
+          m_auto->stop();
+        }
       }
-
       if (data == "RUDDER")
       {
-        Serial.printf("Sending Rudder to NkeTopline\n");
-        sendCommand(0xf4,0x4f,0x1,{0x00,0x02});
-        sendCommand(0xfc,0x4f,0x1,{});
+        // we can have autopilots on both 4E and 4F .. afaik for redundancy
+        if (m_auto)
+        {
+          m_auto->setPilotMode(PilotMode::Rudder);
+        }
+
+        // Serial.printf("Sending Rudder to NkeTopline\n");
+        // sendCommand(0xf4,0x4f,0x1,{0x00,0x02});
+        // sendCommand(0xfc,0x4f,0x1,{});
         /*tNkeMsg msg;
         msg.channel=0xf4;
-        //was 4e the other controller ? 
+        //was 4e the other controller ?
 
         //send write command to f4 to write into reg 01 the value 00 02 (02 is rudder mode) TODO move this to an autopilot controller class
         msg.data={0x4f,0x01,00,02};
@@ -558,19 +688,35 @@ void loop()
         msg.len=2;
         NkeTopline.sendCommand(msg);*/
       }
+      if (data == "COMPASS")
+      {
+        if (m_auto)
+        {
+          m_auto->setPilotMode(PilotMode::Compass);
+        }
+        // sendCommand(0xf4,0x4f,0x1,{0x00,0x00});
+        // sendCommand(0xfc,0x4f,0x1,{});
+      }
 
       if (data == "APARENT")
       {
-
+        if (m_auto)
+        {
+          m_auto->setPilotMode(PilotMode::Aparent);
+        }
+        // why does the system allways read 4e reg 10 before setting mode..
+        // sendCommand(0xf4,0x4f,0x1,{0x00,0x01});
+        // sendCommand(0xfc,0x4f,0x1,{});
       }
+    }
   }
-
-  // N2KRun();
+  vTaskDelay(1);
+  taskYIELD();
 }
 
 void N2Kloop(void *pvParameters)
 {
-
+  m_navico->start();
   for (;;)
   {
     N2KRun();
@@ -668,7 +814,7 @@ void SendN2kHeading()
   {
     HeadingScheduler.UpdateNextTime();
     uint8_t sid = 255;
-    SetN2kMagneticHeading(N2kMsg, sid, heading);
+    SetN2kMagneticHeading(N2kMsg, sid, bridge.heading().N2k());
     NMEA2000.SendMsg(N2kMsg, 0);
   }
 

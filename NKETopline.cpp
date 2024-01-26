@@ -37,6 +37,11 @@ void tNKETopline::ParseMessages()
     // find handler in handlers ? or just call callback.. think the latter is even better
     //  Serial.printf("Received cmd %02x data %02x%02x\n",msg.cmd,msg.data[0],msg.data[1]);
 
+    for (auto &handler : msgHandlers)
+    {
+      handler(msg);
+    }
+
     // Serial.printl()
     // if we fail to read msg return
     if (ret == pdFALSE)
@@ -276,8 +281,8 @@ void tNKETopline::handle_channel()
     // ok lets put more stuff into this as wel go
 
     // TODO filter on channel to see if we have to send at all
-    if (m_handler_table[channel] == 0xFF)
-    {
+    //if (m_handler_table[channel] == 0xFF)
+    //{
       Nke::_Message msg;
       msg.channel = channel;
       msg.len = 2;
@@ -289,7 +294,7 @@ void tNKETopline::handle_channel()
       // TODO add msg filter here!!
       BaseType_t xHigherPriorityTaskWoken = pdFALSE;
       xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
-    }
+    //}
     /* if (xHigherPriorityTaskWoken)
      {
 
@@ -311,7 +316,9 @@ void tNKETopline::handle_bx()
     if (count == 3)
     {
       // debug_frame("bx :");
-      Serial.printf("bx %02x, %02x, %02x\n", channel, data[0], data[1]);
+            //We need to figure out what BX os
+
+      //Serial.printf("bx %02x, %02x, %02x\n", channel, data[0], data[1]);
       // function_count++;
       count = 0;
     }
@@ -324,6 +331,17 @@ void tNKETopline::handle_bx()
 
 void tNKETopline::handle_functions()
 {
+  //send all fc messages up in the system
+  if (count == 5)
+  {
+      Nke::_Message msg;
+      msg.channel = channel;
+      msg.len = 4;
+      memcpy(msg.data, data, 4);
+      BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+      xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
+  }
+  //we can move the reg setting async but the send needs to stay for both fc and f1
   switch (channel)
   {
   case 0xf4:
@@ -516,7 +534,8 @@ void tNKETopline::inter_frame(uint8_t byte)
     if (count == 3)
     {
       // debug_frame("bx :");
-      Serial.printf("bx %02x, %02x, %02x\n", cmd, data[0], data[1]);
+      //Serial.printf("bx %02x, %02x, %02x\n", cmd, data[0], data[1]);
+      //We need to figure out what BX os
       function_count++;
       count = 0;
     }

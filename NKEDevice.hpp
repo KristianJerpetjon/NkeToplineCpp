@@ -237,8 +237,9 @@ namespace Nke
     WindAngle(NkeBridge &bridge) : NkeDevice(0x3c, 1, 0), m_bridge(bridge) {}
     uint16_t data() override
     {
-
-      return uint16_t(RadToDeg(m_bridge.windAngle()));
+      //we could store the const ref to wind angle.. and make it faster as it executes in interrupt context
+      return m_bridge.windAngle().Nke();
+      //return uint16_t(RadToDeg(m_bridge.windAngle()));
       // const double pi = 3.141592;
       // double rad = ((heading * pi) / 180.0);
       /*double sum;

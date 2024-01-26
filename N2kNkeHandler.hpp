@@ -165,6 +165,8 @@ public:
             case tN2kWindReference::N2kWind_Unavailable:
                 break;
             default:
+              //move mstoknots to bridge!!  want data in bridge to be stored as nmea2k less detail in messages
+
                 m_bridge.setWindSpeed(msToKnots(windSpeed));
                 m_bridge.setWindAngle(windAngle);
                 // samples[currentIndex] = (((msToKnots(windSpeed) / stepsize) * reg[1]) / 100);
