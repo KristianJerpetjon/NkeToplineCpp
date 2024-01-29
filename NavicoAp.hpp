@@ -146,13 +146,34 @@ public:
             tN2kMsg reply;
             reply.SetPGN(SIMNET_AP_REPLY); // maybe set pgn clears ?
             reply.Priority = 7;
+            reply.DataLen = N2kMsg.DataLen;
 
             // memcpy(reply.Data, N2kMsg.Data, N2kMsg.DataLen);
             for (auto i = 0; i < N2kMsg.DataLen; i++)
             {
                 reply.Data[i] = N2kMsg.Data[i];
             }
-            reply.DataLen = N2kMsg.DataLen;
+            if (reply.Data[2] == 0xfe)
+            {
+                reply.Destination = 0xfe; // N2kMsg.Source;
+            }
+            // lets try replying something fun by setting the source id before replying that didnt work
+            /* if (reply.Data[2] == 0xfe)
+             {
+                 // asume Fe 1c is a forward to a controller to send control signals.!
+
+                 reply.Data[2] = 35;
+                 reply.PGN = SIMNET_AP_COMMAND;
+                 // reply.SetPGN(SIMNET_AP_COMMAND);
+                 m_replies.push_back(SIMNET_AP_COMMAND);
+                 // N2kMsg.Data[2] = 35;
+                 reply.SetPGN(SIMNET_AP_REPLY); // maybe set pgn clears ?
+
+                 //    sendN2kMsg(reply);
+                 // No idea how to deal with this!
+                 //  reply.Data[2] = N2kMsg.Source;
+                 // reply.Data[2] = 35; // our id
+             }*/
 
             // add our id in the reply this was the missing magic! we can probably store this in a variable but who cares
             // reply.addByte(m_n2k.GetN2kSource());
@@ -411,7 +432,9 @@ public:
             if (!m_replies.empty())
             {
                 // Serial.printf("SendingReply\n");
-                sendN2kMsg(m_replies.front());
+                auto msg = m_replies.front();
+                msg.Source = 35; // todo get source addr for dev %d
+                sendN2kMsg(msg);
                 //    m_n2k.SendMsg(m_replies.front(), m_dev_id);
                 m_replies.pop_front();
             }
@@ -603,13 +626,14 @@ private:
         // mode 03 02 and 0b         NoDrift = 11
         if (m_engaged)
         {
+            tN2kMsg msg;
+
             switch (m_mode)
             {
             case ApMode::Wind:
             case ApMode::Heading:
             case ApMode::NoDrift:
             {
-                tN2kMsg msg;
                 // 6 byte status msg
                 msg.SetPGN(SIMNET_AP_ANGLE);
                 // msg.SetPGN(65431UL);
