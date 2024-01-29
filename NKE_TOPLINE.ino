@@ -241,9 +241,9 @@ void setup()
                                  0                        /// dev id
   );
 
-  NMEA2000.SetDeviceInformation(id + 1, // Unique number. Use e.g. Serial number.
-                                150,    // intranetwork device 130// Device function Ownship Attitude Heading ,pitch, roll,yaw, angular rates
-                                60,     // intranetwork device
+  NMEA2000.SetDeviceInformation(id,  // Unique number. Use e.g. Serial number.
+                                150, // intranetwork device 130// Device function Ownship Attitude Heading ,pitch, roll,yaw, angular rates
+                                60,  // intranetwork device
 
                                 // 130, // Device function=Atmospheric. See codes on https://web.archive.org/web/20190531120557/https://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
                                 // 85, // Device class=External Environment. See codes on https://web.archive.org/web/20190531120557/https://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
@@ -256,7 +256,7 @@ void setup()
   NMEA2000.ExtendTransmitMessages(TransmitMessages0, 0);
   NMEA2000.ExtendReceiveMessages(ReceiveMessages0, 0);
 
-  m_navico = std::unique_ptr<NavicoAp>(new NavicoAp(NMEA2000, id, 1));
+  m_navico = std::unique_ptr<NavicoAp>(new NavicoAp(NMEA2000, bridge, id + 1, 1));
 
   // Uncomment 2 rows below to see, what device will send to bus. Use e.g. OpenSkipper or Actisense NMEA Reader
   // Serial.begin(115200);
