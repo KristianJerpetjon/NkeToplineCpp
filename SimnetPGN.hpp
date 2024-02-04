@@ -139,7 +139,12 @@ enum class SimnetApCommand : uint8_t
     LazySTurn = 23,
     DepthTurn = 24,
     CourseChange = 26,
-    SetAngle = 28,
+
+    // SetAngle = 28,
+    // what is 1c?
+    NotifyController = 28, // this is sendt by controllers before the command to address 0xfe
+    // should we reply something to this ?
+
     TimerSync = 61,
     PingPortEnd = 112,
     PingStarboardEnd = 113,

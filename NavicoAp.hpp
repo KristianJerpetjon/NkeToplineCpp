@@ -56,10 +56,23 @@ static constexpr unsigned long SIMNET_AP_REPLY = 130851;
 
 static constexpr unsigned long SIMNET_COMISSION = 130845;
 
-// same message to and from ?
-const unsigned long NavicoApTransmitMessages[] PROGMEM = {SIMRAD_AP_PGN, SIMNET_AP_STATUS, SIMNET_AP_ANGLE, SIMNET_AP_REPLY, 0};
+static constexpr unsigned long SIMNET_ALARM_TEXT = 130856;
 
-const unsigned long NavicoApRecieveMessages[] PROGMEM = {SIMRAD_AP_PGN, SIMNET_AP_COMMAND, SIMNET_AP_REPLY, SIMNET_COMISSION, 0};
+// same message to and from ?
+const unsigned long NavicoApTransmitMessages[] PROGMEM = {
+    SIMRAD_AP_PGN,
+    SIMNET_AP_STATUS,
+    SIMNET_AP_ANGLE,
+    SIMNET_AP_REPLY,
+    0};
+
+const unsigned long NavicoApRecieveMessages[] PROGMEM = {
+    SIMNET_ALARM_TEXT,
+    SIMRAD_AP_PGN,
+    SIMNET_AP_COMMAND,
+    SIMNET_AP_REPLY,
+    SIMNET_COMISSION,
+    0};
 
 // todo rename to SIMNET_AP!!
 // TODO make an abstract N2kAp..
@@ -125,14 +138,52 @@ public:
     */
     void HandleNMEA2000Msg(const tN2kMsg &N2kMsg)
     {
+        if (N2kMsg.PGN == SIMNET_ALARM_TEXT)
+        {
+            int index = 0;
+            Serial.printf("Alarm Text received length %d\n", N2kMsg.DataLen);
+            uint16_t manufacturer = N2kMsg.Get2ByteUInt(index);
+            uint16_t messageId = N2kMsg.Get2ByteUInt(index);
+            uint8_t unknown = N2kMsg.GetByte(index);
+            uint8_t unknow2 = N2kMsg.GetByte(index);
+            // TODO convert to std::string view then print as c_str
+            Serial.printf("%s\n", &N2kMsg.Data[6]);
+        }
+
         if (N2kMsg.PGN == SIMNET_COMISSION)
         {
-            Serial.printf("Received simnet commission from %d with len %d\n", N2kMsg.Source, N2kMsg.DataLen);
+          int index=0;
+          uint16_t top = N2kMsg.Get2ByteUInt(index);
+          printf("Manufacturer %d\n", top & 0x7FF);
+          printf("Device Type %d\n", top >> 13 & 0x7);
+
+          unsigned char Target = N2kMsg.GetByte(index);
+          printf("Target %d\n",Target);
+
+          Serial.printf("Received simnet commission from %d with len %d\n", N2kMsg.Source, N2kMsg.DataLen);
         }
         // switch(PGNS) to handle
         if (N2kMsg.PGN == SIMRAD_AP_PGN)
         {
-            Serial.printf("Received PGN %u\n", SIMRAD_AP_PGN);
+            Serial.printf("Received PGN %u from %d\n", SIMRAD_AP_PGN, N2kMsg.Source);
+            int index = 0;
+            uint16_t mfc = N2kMsg.Get2ByteUInt(index);
+            uint8_t model = N2kMsg.GetByte(index);
+            uint8_t mode = N2kMsg.GetByte(index);
+
+            switch (static_cast<SimnetApMsgType>(mode))
+            {
+            case SimnetApMsgType::ModeRequest:
+                sendMode();
+                break;
+            case SimnetApMsgType::StatusRequest:
+                sendStatus();
+                break;
+            default:
+                Serial.printf("unexpected msg %02\n", mode);
+                break;
+            }
+
             // analyze it
         }
         if (N2kMsg.PGN == SIMNET_AP_COMMAND)
@@ -144,19 +195,42 @@ public:
             double angle;
 
             tN2kMsg reply;
-            reply.SetPGN(SIMNET_AP_REPLY); // maybe set pgn clears ?
+
+            if (N2kMsg.Data[2] == 0xfe)
+            {
+                // forward broadcasted command to dest
+                reply.SetPGN(SIMNET_AP_COMMAND);
+                for (auto i = 0; i < N2kMsg.DataLen; i++)
+                {
+                    if (i == 2)
+                    {
+                        reply.Data[i] = m_n2k.GetN2kSource(m_dev_id);
+                    }
+                    else
+                    {
+                        reply.Data[i] = N2kMsg.Data[i];
+                    }
+                }
+            }
+            else
+            {
+                reply.SetPGN(SIMNET_AP_REPLY); // maybe set pgn clears ?
+                for (auto i = 0; i < N2kMsg.DataLen; i++)
+                {
+                    reply.Data[i] = N2kMsg.Data[i];
+                }
+            }
             reply.Priority = 7;
             reply.DataLen = N2kMsg.DataLen;
 
             // memcpy(reply.Data, N2kMsg.Data, N2kMsg.DataLen);
-            for (auto i = 0; i < N2kMsg.DataLen; i++)
-            {
-                reply.Data[i] = N2kMsg.Data[i];
-            }
+
+            /*
             if (reply.Data[2] == 0xfe)
             {
-                reply.Destination = 0xfe; // N2kMsg.Source;
-            }
+                reply.Destination = N2kMsg.Source;
+            }*/
+
             // lets try replying something fun by setting the source id before replying that didnt work
             /* if (reply.Data[2] == 0xfe)
              {
@@ -239,7 +313,8 @@ public:
                     printf("NewAgle %f\n", (180 * m_angle) / M_PI);
 
                     break;
-                case SimnetApCommand::SetAngle: // Dont thing this is the command
+                    // what is this issued both on standby and on auto before .. standby and auto msg
+                case SimnetApCommand::NotifyController: // Dont thing this is the command
                     // maybe we should reply the angle?
                     // printMsg(N2kMsg);
 
@@ -418,8 +493,8 @@ public:
     {
         if (m_scheduler.IsTime())
         {
-            sendStatus();
-            sendMode();
+            // sendStatus();
+            // sendMode();
             sendAngle();
             sendMore();
             // sendReply();
@@ -433,7 +508,9 @@ public:
             {
                 // Serial.printf("SendingReply\n");
                 auto msg = m_replies.front();
-                msg.Source = 35; // todo get source addr for dev %d
+
+                msg.Source = m_n2k.GetN2kSource(m_dev_id);
+                //; // todo get source addr for dev %d
                 sendN2kMsg(msg);
                 //    m_n2k.SendMsg(m_replies.front(), m_dev_id);
                 m_replies.pop_front();
@@ -448,7 +525,7 @@ private:
 
     void sendN2kMsg(tN2kMsg &msg)
     {
-        printMsg(msg);
+        //printMsg(msg);
 
         m_n2k.SendMsg(msg, m_dev_id);
     }
@@ -915,5 +992,22 @@ Nav mode uses standard PGNs:
 XTE: 129283
 Navigation Data: 129284
 WP Information: 129285
+
+*/
+
+/*
+19:24:37.612 -> Received simnet commission from 12 with len 14
+19:24:37.612 -> Received simnet commission from 11 with len 14
+19:24:38.330 -> PGN65305,source 35, dst 255, pri 7 content: 41,9f,00,02,02,00,00,00,
+19:24:38.361 -> PGN65305,source 35, dst 255, pri 7 content: 41,9f,00,0a,08,00,00,00,
+19:24:38.361 -> PGN65340,source 35, dst 255, pri 3 content: 41,9f,00,00,fe,f8,00,80,
+19:24:38.800 -> PGN130850,source 12, dst 255, pri 2 content: 41,9f,ff,ff,01,17,4a,00,ff,ff,ff,ff,
+19:24:38.800 -> Unhandled SimnetApCommand 4a(74)
+19:24:38.800 -> PGN130851,source 35, dst 255, pri 7 content: 41,9f,ff,ff,01,17,4a,00,ff,ff,ff,ff,
+19:24:38.838 -> Received simnet commission from 12 with len 14
+19:24:38.838 -> Received simnet commission from 11 with len 14
+
+So we do receive a initial AP request for 01,17 ..
+my guess is that 01 is controller adddress in this case and 17 is unknown
 
 */
