@@ -1,20 +1,25 @@
 // #include "NKE.hpp"
 
-#include <HardwareSerial.h>
-
+//#include <HardwareSerial.h>
+/*
 #define ESP32_CAN_TX_PIN GPIO_NUM_5 // Set CAN TX port to 5 (used in NMEA2000_CAN.H)
 #define ESP32_CAN_RX_PIN GPIO_NUM_4 // Set CAN RX port to 4
+*/
+#define ESP32_CAN_TX_PIN GPIO_NUM_27 // Set CAN TX port to 5 (used in NMEA2000_CAN.H)
+#define ESP32_CAN_RX_PIN GPIO_NUM_19// Set CAN RX port to 4
+
 
 #include <NMEA2000_CAN.h> // This will automatically choose the right CAN library and create suitable NMEA2000 object
 #include <N2kMessages.h>
 #include <N2kMessagesEnumToStr.h>
 // specify what serial port the NKE TOPLINE is connected to and what pins are in use for RX and TX
 #define NKE_TOPLINE_SERIAL Serial2
-#define NKE_TOPLINE_RXD 16
-#define NKE_TOPLINE_TXD 17
 
-#include "NkeAutopilot.hpp"
+#define NKE_TOPLINE_RXD GPIO_NUM_13
+#define NKE_TOPLINE_TXD GPIO_NUM_14
+
 #include "NKETopline.hpp"
+#include "NkeAutopilot.hpp"
 
 #include "NavicoAp.hpp"
 
@@ -193,6 +198,10 @@ TaskHandle_t TaskAp;
 
 std::unique_ptr<AutopilotController> m_auto;
 
+int m_id = 1;
+
+tNKETopline NkeTopline(Serial2,NKE_TOPLINE_RXD,NKE_TOPLINE_TXD);
+
 void setup()
 {
   pinMode(32, OUTPUT); // set the pin as output
@@ -229,6 +238,8 @@ void setup()
   // second device is the m_navico_ap
   NMEA2000.SetDeviceCount(2);
 
+  // device id here
+
   // Set Product information
   NMEA2000.SetProductInformation("00000002",              // Manufacturer's Model serial code
                                  100,                     // Manufacturer's product code
@@ -238,7 +249,7 @@ void setup()
                                  0xff,                    // load equivalency - use default
                                  0xffff,                  // NMEA 2000 version - use default
                                  0xff,                    // Sertification level - use default
-                                 0                        /// dev id
+                                 m_id                     /// dev id
   );
 
   NMEA2000.SetDeviceInformation(id,  // Unique number. Use e.g. Serial number.
@@ -249,14 +260,14 @@ void setup()
                                 // 85, // Device class=External Environment. See codes on https://web.archive.org/web/20190531120557/https://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
                                 2046, // Just choosen free from code list on https://web.archive.org/web/20190529161431/http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf
                                 4,    // Marine
-                                0     // dev id
+                                m_id  // dev id
   );
 
   // Maybe multi device is broken ?
-  NMEA2000.ExtendTransmitMessages(TransmitMessages0, 0);
-  NMEA2000.ExtendReceiveMessages(ReceiveMessages0, 0);
+  NMEA2000.ExtendTransmitMessages(TransmitMessages0, m_id);
+  NMEA2000.ExtendReceiveMessages(ReceiveMessages0, m_id);
 
-  m_navico = std::unique_ptr<NavicoAp>(new NavicoAp(NMEA2000, bridge, id + 1, 1));
+  m_navico = std::unique_ptr<NavicoAp>(new NavicoAp(NMEA2000, bridge, id + 1, 0));
 
   // Uncomment 2 rows below to see, what device will send to bus. Use e.g. OpenSkipper or Actisense NMEA Reader
   // Serial.begin(115200);
@@ -564,7 +575,7 @@ void N2KRun()
     m_navico->process();
   }
 
-  int SourceAddress = NMEA2000.GetN2kSource();
+  int SourceAddress = NMEA2000.GetN2kSource(m_id);
   if (SourceAddress != NodeAddress)
   { // Save potentially changed Source Address to NVS memory
     /*NodeAddress = SourceAddress;      // Set new Node Address (to save only once)
@@ -586,7 +597,7 @@ void SendN2kRudder()
   if (RudderScheduler.IsTime())
   {
     SetN2kRudder(N2kMsg, bridge.rudderAngle().N2k());
-    NMEA2000.SendMsg(N2kMsg, 0);
+    NMEA2000.SendMsg(N2kMsg, m_id);
     RudderScheduler.UpdateNextTime();
   }
 }
@@ -803,7 +814,7 @@ void SendN2kWind()
     WindScheduler.UpdateNextTime();
     uint8_t sid = 255;
     SetN2kWindSpeed(N2kMsg, sid, ReadWindSpeed(update), ReadWindAngle(update), N2kWind_Apprent);
-    NMEA2000.SendMsg(N2kMsg, 0);
+    NMEA2000.SendMsg(N2kMsg, m_id);
   }
 }
 
@@ -815,7 +826,7 @@ void SendN2kHeading()
     HeadingScheduler.UpdateNextTime();
     uint8_t sid = 255;
     SetN2kMagneticHeading(N2kMsg, sid, bridge.heading().N2k());
-    NMEA2000.SendMsg(N2kMsg, 0);
+    NMEA2000.SendMsg(N2kMsg, m_id);
   }
 
   // SetN2kTrueHeading(tN2kMsg &N2kMsg, unsigned char SID, double Heading)

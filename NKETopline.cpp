@@ -3,32 +3,46 @@
 
 #include <map>
 
-tNKETopline &NkeTopline = tNKETopline::getInstance();
-
-tNKETopline::tNKETopline(HardwareSerial &serial, int8_t rxpin, int8_t txpin)
+/*tNKETopline &NkeTopline = tNKETopline::getInstance();
+*/
+tNKETopline::tNKETopline(HardwareSerial &serial, gpio_num_t  rxpin, gpio_num_t  txpin)
     : m_serial(serial), m_rxpin(rxpin), m_txpin(txpin), m_rxQueue(xQueueCreate(128, sizeof(Nke::_Message))), m_cmdQueue(xQueueCreate(128, sizeof(Nke::_Message)))
 {
 }
 
+//TODO evaluate if running only SWSerial makes more sense
 void tNKETopline::Open()
 {
-  // todo DO SOME MORE BUS ANALASYS/ USE LOGIC PROBES ?
-  m_serial.begin(9600, /*SERIAL_8N2*/ SERIAL_8E1, m_rxpin /*, -1*/ /*m_txpin*/); // Hardware Serial of ESP32
+
+  //TODO abstract print to callback with id's
+  Serial.printf("Starting NkeTopline 9600 baud RX_PIN %d,TX_PIN %d\n",m_rxpin,m_txpin);
+
   m_serial.setRxTimeout(1);
   // TODO limit what the ISR acesses
   m_serial.onReceive([this](void)
                      {
       size_t available = m_serial.available();
       while (available --) {
-        receiveByte(m_serial.read());
+        auto byte=m_serial.read();
+        receiveByte(byte);
+        Serial.printf("%02x\n",byte);
+        //receiveByte(m_serial.read());
       } });
 
+
+  m_serial.begin(9600, SERIAL_8E1, m_rxpin); // Hardware Serial of ESP32
+  
   // TODO check if it matters if its 8S1 vs 8N1 as long as we use write(byte,parity)
   m_serialTx.begin(9600, SWSERIAL_8S1, -1, m_txpin);
+
+  //set timeout to 1 second
 }
 
 void tNKETopline::ParseMessages()
 {
+
+  //Todo if no data .. Reset NKE status
+
   while (uxQueueMessagesWaiting(m_rxQueue) > 0)
   {
     Nke::_Message msg;
@@ -55,6 +69,11 @@ void tNKETopline::ParseMessages()
     }
     // Dont do anything just empty queue
   }
+  //probably should reset more
+  if (isTimeout())
+  {
+    setState(State::UNKNOWN);
+  }
 }
 
 const std::map<tNKETopline::State, std::string> stateMap = {
@@ -66,6 +85,24 @@ const std::map<tNKETopline::State, std::string> stateMap = {
     {tNKETopline::State::SYNC_LOST, "SYNC_LOST"},
 
 };
+
+void tNKETopline::updateTimeout(const unsigned long &timeout)
+{
+      m_timeout=millis()+timeout;
+}
+
+bool tNKETopline::isTimeout() 
+{
+  if (m_state != State::UNKNOWN)
+  {
+    if (m_timeout< millis() )
+    {
+      Serial.printf("Nke bus Timeout\n");
+      return true;
+    }
+  }
+  return false;
+}
 
 std::string tNKETopline::state2String(State s)
 {
@@ -85,9 +122,14 @@ void tNKETopline::setState(State state)
   // if we have to reset something when switching state do it here!
   switch (state)
   {
+    case State::INIT:
+    updateTimeout(10000); //wait up to 10 seconds for init sequence
+    break;
   case State::INTER_FRAME:
     break;
   case State::FRAME:
+    //start timer!
+    updateTimeout();
     frame_count = 0;
     break;
   case State::FAIL:
@@ -108,30 +150,9 @@ void tNKETopline::sendDevice(uint16_t data)
 // todo make init care about "_ or high parity !!"
 void tNKETopline::init(uint8_t byte)
 {
-  const uint8_t start = 0x2;
-  const uint8_t end = 0xEE;
-
-  static uint8_t expected = start;
-
-  static bool detect = false;
-  static uint8_t detected = 0xFF;
-  static int detect_count = 0;
-
   if (detect)
   {
     detect = false;
-    /* if (detected == end)
-     {
-       setState(State::FRAME);
-       Serial.printf("Found %d devices\n", m_detected.size());
-       for (auto dev : m_detected)
-       {
-         Serial.printf(" %02x", dev);
-       }
-       Serial.println();
-
-       return;
-     }*/
     m_detected.push_back(detected);
   }
   else if (byte == expected)
@@ -168,10 +189,6 @@ void tNKETopline::init(uint8_t byte)
     // detect_count=0;
     detected = expected - 1;
   }
-
-  // emulate speed
-
-  // TODO if we have an output anounce it here..
 }
 
 void tNKETopline::frame(uint8_t byte)
@@ -277,36 +294,21 @@ void tNKETopline::handle_channel()
 
   if (count >= 3)
   {
-    // NkeMessage msg;
-    // ok lets put more stuff into this as wel go
-
-    // TODO filter on channel to see if we have to send at all
-    //if (m_handler_table[channel] == 0xFF)
-    //{
+      //send all messages up the stack
       Nke::_Message msg;
       msg.channel = channel;
       msg.len = 2;
+      //probably faster to do direct assignment
       memcpy(msg.data, data, 2);
-      /*
-          msg.cmd = cmd;
-          memcpy(msg.data, data, 2);
-      */
-      // TODO add msg filter here!!
       BaseType_t xHigherPriorityTaskWoken = pdFALSE;
       xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
-    //}
-    /* if (xHigherPriorityTaskWoken)
-     {
-
-     }*/
-    // if we have a listener..
-    // frame_count++;
     count = 0;
   }
 }
 
 void tNKETopline::handle_bx()
 {
+  //What are in these messages ? .. Timer ? position ? 
   switch (channel)
   {
   case 0xb9:
@@ -315,11 +317,6 @@ void tNKETopline::handle_bx()
   case 0xbc:
     if (count == 3)
     {
-      // debug_frame("bx :");
-            //We need to figure out what BX os
-
-      //Serial.printf("bx %02x, %02x, %02x\n", channel, data[0], data[1]);
-      // function_count++;
       count = 0;
     }
     break;
@@ -359,8 +356,6 @@ void tNKETopline::handle_functions()
         }
       }
       debug_frame("write:");
-      //  if (m_active_controller == 0x00 ) // if not master dont count the frame also verify that master only can occupy the timeslot
-      //    function_count++;
       count = 0;
     }
     break;
@@ -446,11 +441,11 @@ void tNKETopline::handle_controllers()
   // auto id = data[0];
   if (count == 1)
   {
+    //if our controller ID is the state we are in send message..
+    //currently we only sopport one controller / slave id.. should be enough
     auto dev = m_dev_table[channel];
     if (dev != nullptr)
     {
-      // do we care ?
-      // Serial.printf("Checking sendBox\n");
       BaseType_t xTaskWokenByReceive = pdFALSE;
       Nke::_Message msg;
       if (uxQueueMessagesWaitingFromISR(m_cmdQueue) > 0)
@@ -459,13 +454,7 @@ void tNKETopline::handle_controllers()
                                  (void *)&msg,
                                  &xTaskWokenByReceive))
         {
-          // Serial.printf("Sending Msg\n");
-
-          // perform read fc command
           sendFx(msg);
-          // sendDevice(dev->version());
-          //  why the 0x40 ?
-          // m_serialTx.write(0x40, PARITY_SPACE);
         }
       }
     }
@@ -646,84 +635,6 @@ void tNKETopline::inter_frame(uint8_t byte)
     return;
   }
 
-  // 00 01 //01 02 //etc sequence when controllers > 1
-  // else allways 00 00
-  /*if (cmd < 10) {
-    //if we are next controller deal with it .. otherwise ignore..
-    if (count==2) {
-      //if data==fc.. deal with command
-      count=0;
-      setState(State::FRAME);
-    }
-  }
-  else if (cmd == 0xbb | cmd == 0xbc)
-  {
-    //is this allways the sync pattern ?
-    //bb 00 01 00
-    //bc 00 00 00
-    //frame sync
-    if (count == 4) {
-      if (cmd != expected_sync) {
-        debug_frame("Sync Unexpected");
-        //Serial.printf("Unexpected Sync %02x\n",cmd);
-      } else {
-        //debug_frame("Sync Expected");
-
-      }
-      if (cmd == 0xbb){
-        expected_sync = 0xbc;
-      }else {
-        expected_sync = 0xbb;
-      }
-      count=0;
-      setState(State::FRAME);
-    }
-  }
-  //function command fc ?
-  else if (cmd == 0xfc)
-  {
-    //FC + UPCode + 3 byte payload
-    if (count == 2 )
-    {
-      //if (data[1])
-      auto fc_target=data[0];
-      auto fc_command=data[1];
-      auto nkeData=nkeDataArray[fc_target];
-
-      //ack command!!
-      if (nkeData != nullptr)
-      {
-      m_serialTx.write(0x00,PARITY_SPACE);
-      //ack fc command
-      Serial.printf("Ack fc command for target %02x with reg payload %02x\n",fc_target,fc_command);
-      }
-
-    }
-    if (count == 5) {
-      //setState(State::FAIL);
-      debug_frame("Function Command :");
-      count=0;
-
-      function_count++;
-
-      if (function_count == 2){
-        function_count=0;
-        setState(State::FRAME);
-      }
-      //if second command is seen
-      //setState(State::FRAME);
-
-    }
-  }
-  else
-  {
-    if (count == 4) {
-      debug_frame("Unknown inter_frame :");
-      setState(State::FAIL);
-      count=0;
-    }
-    //Serial.printf("Unknown inter_frame_type %02x", inter_frame_type);
-  }*/
 }
 void tNKETopline::print_buf()
 {
@@ -759,7 +670,11 @@ void tNKETopline::receiveByte(uint8_t byte)
   case State::UNKNOWN:
     if (prev == 0xF0 && byte == 0x02)
     {
-      Serial.printf("Sync Detected\n");
+      Serial.printf("INIT Detected\n");
+      expected = start;
+      detect = false;
+      detected = 0xFF;
+      detect_count = 0;
       setState(State::INIT);
       init(byte);
       break;
@@ -771,11 +686,6 @@ void tNKETopline::receiveByte(uint8_t byte)
       data[0] = byte;
       setState(State::FRAME);
       break;
-      /*count = 2;
-      cmd = prev;
-      data[0] = byte;
-      setState(State::INTER_FRAME);
-      break;*/
     }
     prev = byte;
     break;
@@ -784,6 +694,7 @@ void tNKETopline::receiveByte(uint8_t byte)
     break;
   case State::FRAME:
     channel_decoder(byte);
+    updateTimeout();
     // frame(byte);
     break;
   case State::INTER_FRAME:

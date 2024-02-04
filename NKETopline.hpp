@@ -7,54 +7,34 @@
 #include <RingBuf.h>
 
 #include <SoftwareSerial.h>
-// #include <HardwareSerial.h>
 #include <vector>
 #include <string>
 #include <map>
 #include <memory>
 
-#include "NkeDevice.hpp"
-#include "NkeHandler.hpp"
+
 
 #ifndef NKE_TOPLINE_SERIAL
 #define NKE_TOPLINE_SERIAL Serial2
 #endif
 
-#if !defined(NKE_TOPLINE_RXD)
-#define NKE_TOPLINE_RXD 16
+#ifndef NKE_TOPLINE_RXD
+#define NKE_TOPLINE_RXD GPIO_NUM_16
 #endif
 
-#if !defined(NKE_TOPLINE_TXD)
-#define NKE_TOPLINE_TXD 17
+#ifndef NKE_TOPLINE_TXD
+#define NKE_TOPLINE_TXD GPIO_NUM_17
 #endif
 
-/*
-struct NkeMessage
-{
-  uint8_t cmd;
-  uint8_t data[2];
-  uint8_t dummy;
-};*/
+#include "NkeDevice.hpp"
+#include "NkeHandler.hpp"
 
-/*
-static inline void uint16ToChars(uint16_t in, uint8_t *out)
-{
-  // depends on the endians
-  out[0] = (in >> 8) & 0xFF;
-  out[1] = in & 0xFF;
-}
-
-static inline void charsTouint16(uint8_t *in, uint16_t &out)
-{
-  out = (in[0] << 8) | (in[1]);
-}
-*/
 class tNKETopline
 {
-private:
-  tNKETopline(HardwareSerial &serial, const int8_t rxpin = -1, const int8_t txpin = -1);
-
 public:
+  tNKETopline(HardwareSerial &serial, gpio_num_t  rxpin , gpio_num_t  txpin );
+
+
   enum class State
   {
     UNKNOWN,
@@ -68,19 +48,15 @@ public:
 
   tNKETopline(const tNKETopline &) = delete; // no copying
   tNKETopline &operator=(const tNKETopline &) = delete;
-  static tNKETopline &getInstance()
+  /*static tNKETopline &getInstance()
   {
-    static tNKETopline instance(NKE_TOPLINE_SERIAL, NKE_TOPLINE_RXD, NKE_TOPLINE_TXD);
+    static tNKETopline instance(NKE_TOPLINE_SERIAL);
 
     return instance;
-    /*static tNKETopline *s_instance=nullptr;
 
-    if (!s_instance) {
-      s_instance=(new tNKETopline(NKE_TOPLINE_SERIAL,NKE_TOPLINE_RXD,NKE_TOPLINE_TXD));
-    }*/
 
     // return *s_instance;
-  }
+  }*/
   void Open();
 
   void ParseMessages();
@@ -152,8 +128,8 @@ private:
   EspSoftwareSerial::UART m_serialTx;
 
   State m_state = State::UNKNOWN;
-  int8_t m_rxpin;
-  int8_t m_txpin;
+  gpio_num_t  m_rxpin;
+  gpio_num_t  m_txpin;
   QueueHandle_t m_rxQueue;
   QueueHandle_t m_cmdQueue;
 
@@ -179,6 +155,17 @@ private:
   void handle_controllers();
   void sendFx(const Nke::_Message &msg);
   uint8_t channel;
-};
+  unsigned long m_timeout; //timer to reset to UNKNOWN state if bus is inactive for 1 second
+  void updateTimeout(const unsigned long &timeout=1000); //default 1 second timeout
+  bool isTimeout();
 
-extern tNKETopline &NkeTopline;
+  // These are moved from init to be able to reset init if new init sequence F0 is detected!
+  const uint8_t start = 0x2;
+  const uint8_t end = 0xEE;
+
+  uint8_t expected = start;
+
+  bool detect = false;
+  uint8_t detected = 0xFF;
+  int detect_count = 0;
+};
