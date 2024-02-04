@@ -95,19 +95,17 @@ public:
                       (TickType_t)0) == pdPASS;
   }
 
+  unsigned long sendCount() {return m_send_count; }
+  unsigned long receiveCount() { return m_receive_count; }
+  bool isConnceted() { return m_state == State::FRAME; }
+
 private:
   std::map<uint8_t, std::shared_ptr<NkeHandler>> m_handlers;
   std::vector<std::shared_ptr<NkeDevice>> m_devices;
 
   std::vector<std::function<void(const Nke::_Message &)>> msgHandlers;
-  // std::queue<Nke::_Message>
-  // is there any point in being more than one controller in the network ? ..
-  // my guess is not!
-  // todo change these to use xqueues
-  // std::deque<Nke::_Message> m_command_queue;
-  // std::deque<Nke::_Message> reply; //TODO ship replies over same queue as data ?  use nkehandler or similar
 
-  // TODO store as reference wrappers instead of pointers ?
+  //removing this as we want to pick up messages that arent only to ourselves
   std::array<NkeDevice *, 256> m_dev_table{};
   // std::array<uint8_t, 256> m_handler_table{};
 
@@ -168,4 +166,7 @@ private:
   bool detect = false;
   uint8_t detected = 0xFF;
   int detect_count = 0;
+
+  unsigned long m_send_count=0;
+  unsigned long m_receive_count=0;
 };

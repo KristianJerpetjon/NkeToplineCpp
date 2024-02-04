@@ -1,10 +1,16 @@
 // #include "NKE.hpp"
+//#include <M5Tough.h>
 
 //#include <HardwareSerial.h>
 /*
 #define ESP32_CAN_TX_PIN GPIO_NUM_5 // Set CAN TX port to 5 (used in NMEA2000_CAN.H)
 #define ESP32_CAN_RX_PIN GPIO_NUM_4 // Set CAN RX port to 4
 */
+
+#include <M5Unified.h>
+
+
+
 #define ESP32_CAN_TX_PIN GPIO_NUM_27 // Set CAN TX port to 5 (used in NMEA2000_CAN.H)
 #define ESP32_CAN_RX_PIN GPIO_NUM_19// Set CAN RX port to 4
 
@@ -23,6 +29,7 @@
 
 #include "NavicoAp.hpp"
 
+uint32_t count;
 // need to toggle some gpios
 // #include "driver/gpio.h"
 
@@ -127,6 +134,37 @@ tNMEA2000Handler NMEA2000Handlers[]={
 {0,0}
 };*/
 
+//TODO move M5 code to separate files
+void setupM5()
+{
+  auto cfg = M5.config(); // Assign a structure for initializing M5Stack
+  // If config is to be set, set it here
+  // Example.
+  // cfg.external_spk = true;
+  cfg.output_power = false;
+
+  //lets see if we can play sound!!
+
+  cfg.external_speaker.module_display = true;
+
+
+  M5.begin(cfg);                        // initialize M5 device
+
+  M5.Display.setTextSize(3);            // change text size
+  M5.Display.print("Hello World!!!") ;  // display Hello World! and one line is displayed on the screen
+  Serial.println("Hello World!!!") ;    // display Hello World! and one line on the serial monitor
+  count = 0;                            // initialize count
+
+  //plays a tone on startup we should play a tone on NKE connected and disconnected ? smae with CAN ?
+  M5.Speaker.setVolume(64);
+  M5.Speaker.tone(1000, 1000, 0, true);
+
+  //M5.Speaker.setBeep(1000,1000);
+  //M5.Speaker.beep();
+}
+
+
+
 // TODO fetch second sensor from Boat to get the rest of these data bridged
 const unsigned long TransmitMessages1[] PROGMEM = {127250L, 0};
 
@@ -204,6 +242,9 @@ tNKETopline NkeTopline(Serial2,NKE_TOPLINE_RXD,NKE_TOPLINE_TXD);
 
 void setup()
 {
+
+  setupM5();
+
   pinMode(32, OUTPUT); // set the pin as output
   digitalWrite(32, HIGH);
   pinMode(33, OUTPUT); // set the pin as output
@@ -281,8 +322,8 @@ void setup()
   Serial.printf("NodeAddress=%d\n", NodeAddress);
 
   // If you also want to see all traffic on the bus use N2km_ListenAndNode instead of N2km_NodeOnly below
-  NMEA2000.SetMode(tNMEA2000::N2km_NodeOnly, NodeAddress);
-  // NMEA2000.SetMode(tNMEA2000::N2km_ListenAndNode,32);
+  //NMEA2000.SetMode(tNMEA2000::N2km_NodeOnly, NodeAddress);
+  NMEA2000.SetMode(tNMEA2000::N2km_ListenAndNode,32);
   // N2km_ListenAndNode
   //  NMEA2000.SetDebugMode(tNMEA2000::dm_Actisense); // Uncomment this, so you can test code without CAN bus chips on Arduino Mega
   NMEA2000.EnableForward(false);
@@ -632,8 +673,25 @@ void loop()
 
 void ApLoop(void *pvParameters)
 {
+  unsigned long update=millis()+1000;
+
   for (;;)
   {
+      unsigned long now=millis();
+      if (now > update)
+      {
+        update=now+1000;
+        M5.Display.setTextSize(5);
+        M5.Display.setCursor(0, 20);             // set character drawing coordinates (cursor position)
+        //M5.Display.printf("COUNT: %d\n", count); // display count on screen
+        M5.Display.printf("Topline RX %u\n",NkeTopline.receiveCount());
+        M5.Display.printf("Topline TX %u\n",NkeTopline.sendCount());
+
+        //Serial.printf("COUNT: %d\n", count);  // display count serially
+        count++;                              // increase count by 1
+      }
+
+
     if (Serial.available() > 0)
     {
       String data = Serial.readStringUntil('\n');

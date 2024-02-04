@@ -23,10 +23,10 @@ void tNKETopline::Open()
                      {
       size_t available = m_serial.available();
       while (available --) {
-        auto byte=m_serial.read();
-        receiveByte(byte);
-        Serial.printf("%02x\n",byte);
-        //receiveByte(m_serial.read());
+        //auto byte=m_serial.read();
+        //receiveByte(byte);
+        //Serial.printf("%02x\n",byte);
+        receiveByte(m_serial.read());
       } });
 
 
@@ -45,6 +45,7 @@ void tNKETopline::ParseMessages()
 
   while (uxQueueMessagesWaiting(m_rxQueue) > 0)
   {
+    m_receive_count++;
     Nke::_Message msg;
     auto ret = xQueueReceive(m_rxQueue, &msg, 0);
 
@@ -143,6 +144,7 @@ void tNKETopline::setState(State state)
 
 void tNKETopline::sendDevice(uint16_t data)
 {
+  m_send_count++;
   m_serialTx.write((data >> 8) & 0xFF, PARITY_SPACE);
   m_serialTx.write(data & 0xFF, PARITY_SPACE);
 }
@@ -423,6 +425,7 @@ void tNKETopline::handle_functions()
 
 void tNKETopline::sendFx(const Nke::_Message &msg)
 {
+  m_send_count++;
   if (msg.len > 0)
   {
     // i have no idea if this is correct
