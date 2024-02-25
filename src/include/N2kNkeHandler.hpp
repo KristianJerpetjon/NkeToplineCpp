@@ -103,19 +103,22 @@ public:
         // if cant parse we exit
         if (ParseN2kBoatSpeed(N2kMsg, SID, SOW, SOG, SWRT))
         {
-            // if (N2kIsNA(SOW))
-            // {
-            m_bridge.setBoatSpeed(SOW);
-            // setData(0);
-            /* }
-             else
-             {
+            if (!N2kIsNA(SOW))
+            {
+                m_bridge.setBoatSpeed(SOW);
+                // setData(0);
+            }
+            else
+            {
 
-                 // We do the math in knots ..
-                 setData(uint16_t(msToKnots(SOW) / stepsize));
-                 m_fast_data = m_data;
-             }*/
-            m_bridge.setSpeedOverGround(SOG);
+                // We do the math in knots ..
+                //    setData(uint16_t(msToKnots(SOW) / stepsize));
+                //    m_fast_data = m_data;
+            }
+            if (!N2kIsNA(SOG))
+            {
+                m_bridge.setSpeedOverGround(SOG);
+            }
         }
     }
     void handleNkeData(const tNkeMsg &msg) override {}
@@ -165,7 +168,7 @@ public:
             case tN2kWindReference::N2kWind_Unavailable:
                 break;
             default:
-              //move mstoknots to bridge!!  want data in bridge to be stored as nmea2k less detail in messages
+                // move mstoknots to bridge!!  want data in bridge to be stored as nmea2k less detail in messages
 
                 m_bridge.setWindSpeed(msToKnots(windSpeed));
                 m_bridge.setWindAngle(windAngle);
@@ -180,3 +183,113 @@ public:
         // convert to right double format and stick it into array
     }
 };
+
+class HandlePosition : public N2kNkeHandler
+{
+public:
+    HandlePosition(NkeBridge &bridge) : N2kNkeHandler(bridge) {}
+    void handleN2kData(const tN2kMsg &N2kMsg) override
+    {
+        double Longitude;
+        double Latitude;
+        if (ParseN2kPGN129025(N2kMsg, Latitude, Longitude))
+        {
+            m_bridge.setPosition(Latitude, Longitude);
+        }
+    }
+    void handleNkeData(const tNkeMsg &msg) override
+    {
+        // convert to right double format and stick it into array
+    }
+};
+
+class HandleCogSog : public N2kNkeHandler
+{
+public:
+    HandleCogSog(NkeBridge &bridge) : N2kNkeHandler(bridge) {}
+    void handleN2kData(const tN2kMsg &N2kMsg) override
+    {
+        unsigned char SID;
+        tN2kHeadingReference HeadingReference;
+        // tNMEA0183Msg NMEA0183Msg;
+        double COG;
+        double SOG;
+        if (ParseN2kCOGSOGRapid(N2kMsg, SID, HeadingReference, COG, SOG))
+        {
+            if (HeadingReference == tN2kHeadingReference::N2khr_true)
+            {
+                // TODO deal with variation!!
+                if (!N2kIsNA(SOG))
+                {
+                    m_bridge.setSpeedOverGround(SOG);
+                }
+                if (!N2kIsNA(COG))
+                {
+                    m_bridge.setCourseOverGround(COG);
+                }
+            }
+            // LastCOGSOGTime = millis();
+            /*double MCOG = (!N2kIsNA(COG) && !N2kIsNA(Variation) ? COG - Variation : NMEA0183DoubleNA);
+            if (HeadingReference == N2khr_magnetic)
+            {
+                MCOG = COG;
+                if (!N2kIsNA(Variation))
+                    COG -= Variation;
+            }
+            if (NMEA0183SetVTG(NMEA0183Msg, COG, MCOG, SOG))
+            {
+                SendMessage(NMEA0183Msg);
+            }*/
+        }
+        /*
+           double Longitude;
+           double Latitude;
+           if (ParseN2kPGN129025(N2kMsg, Latitude, Longitude))
+           {
+               m_bridge.setPosition(Latitude, Longitude);
+           }*/
+    }
+    void handleNkeData(const tNkeMsg &msg) override
+    {
+        // convert to right double format and stick it into array
+    }
+};
+
+/*
+    //  case 129026UL: HandleCOGSOG(N2kMsg);
+    //  case 129029UL: HandleGNSS(N2kMsg);
+    //  case 129025UL: HandlePosition(N2kMsg);
+
+    // void tN2kDataToNMEA0183::HandlePosition(const tN2kMsg &N2kMsg) {
+
+  if ( ParseN2kPGN129025(N2kMsg, Latitude, Longitude) ) {
+    LastPositionTime=millis();
+  }
+}
+
+void tN2kDataToNMEA0183::HandleCOGSOG(const tN2kMsg &N2kMsg) {
+unsigned char SID;
+tN2kHeadingReference HeadingReference;
+tNMEA0183Msg NMEA0183Msg;
+
+  if ( ParseN2kCOGSOGRapid(N2kMsg,SID,HeadingReference,COG,SOG) ) {
+    LastCOGSOGTime=millis();
+    double MCOG=( !N2kIsNA(COG) && !N2kIsNA(Variation)?COG-Variation:NMEA0183DoubleNA );
+    if ( HeadingReference==N2khr_magnetic ) {
+      MCOG=COG;
+      if ( !N2kIsNA(Variation) ) COG-=Variation;
+    }
+    if ( NMEA0183SetVTG(NMEA0183Msg,COG,MCOG,SOG) ) {
+      SendMessage(NMEA0183Msg);
+    }
+  }
+}
+
+  double Latitude;
+  double Longitude;
+  double Altitude;
+  double Variation;
+  double Heading;
+  double COG;
+  double SOG;
+  */

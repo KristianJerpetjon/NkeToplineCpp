@@ -1,21 +1,23 @@
-#include "NKETopline.hpp"
-#include "NkeMessage.hpp"
+#include "include/NKETopline.hpp"
+#include "include/NkeMessage.hpp"
+
+#include <SoftwareSerial.h>
 
 #include <map>
 
 /*tNKETopline &NkeTopline = tNKETopline::getInstance();
-*/
-tNKETopline::tNKETopline(HardwareSerial &serial, gpio_num_t  rxpin, gpio_num_t  txpin)
+ */
+tNKETopline::tNKETopline(HardwareSerial &serial, gpio_num_t rxpin, gpio_num_t txpin)
     : m_serial(serial), m_rxpin(rxpin), m_txpin(txpin), m_rxQueue(xQueueCreate(128, sizeof(Nke::_Message))), m_cmdQueue(xQueueCreate(128, sizeof(Nke::_Message)))
 {
 }
 
-//TODO evaluate if running only SWSerial makes more sense
+// TODO evaluate if running only SWSerial makes more sense
 void tNKETopline::Open()
 {
 
-  //TODO abstract print to callback with id's
-  Serial.printf("Starting NkeTopline 9600 baud RX_PIN %d,TX_PIN %d\n",m_rxpin,m_txpin);
+  // TODO abstract print to callback with id's
+  Serial.printf("Starting NkeTopline 9600 baud RX_PIN %d,TX_PIN %d\n", m_rxpin, m_txpin);
 
   m_serial.setRxTimeout(1);
   // TODO limit what the ISR acesses
@@ -29,19 +31,18 @@ void tNKETopline::Open()
         receiveByte(m_serial.read());
       } });
 
-
   m_serial.begin(9600, SERIAL_8E1, m_rxpin); // Hardware Serial of ESP32
-  
+
   // TODO check if it matters if its 8S1 vs 8N1 as long as we use write(byte,parity)
   m_serialTx.begin(9600, SWSERIAL_8S1, -1, m_txpin);
 
-  //set timeout to 1 second
+  // set timeout to 1 second
 }
 
 void tNKETopline::ParseMessages()
 {
 
-  //Todo if no data .. Reset NKE status
+  // Todo if no data .. Reset NKE status
 
   while (uxQueueMessagesWaiting(m_rxQueue) > 0)
   {
@@ -70,7 +71,7 @@ void tNKETopline::ParseMessages()
     }
     // Dont do anything just empty queue
   }
-  //probably should reset more
+  // probably should reset more
   if (isTimeout())
   {
     setState(State::UNKNOWN);
@@ -89,14 +90,14 @@ const std::map<tNKETopline::State, std::string> stateMap = {
 
 void tNKETopline::updateTimeout(const unsigned long &timeout)
 {
-      m_timeout=millis()+timeout;
+  m_timeout = millis() + timeout;
 }
 
-bool tNKETopline::isTimeout() 
+bool tNKETopline::isTimeout()
 {
   if (m_state != State::UNKNOWN)
   {
-    if (m_timeout< millis() )
+    if (m_timeout < millis())
     {
       Serial.printf("Nke bus Timeout\n");
       return true;
@@ -123,13 +124,13 @@ void tNKETopline::setState(State state)
   // if we have to reset something when switching state do it here!
   switch (state)
   {
-    case State::INIT:
-    updateTimeout(10000); //wait up to 10 seconds for init sequence
+  case State::INIT:
+    updateTimeout(10000); // wait up to 10 seconds for init sequence
     break;
   case State::INTER_FRAME:
     break;
   case State::FRAME:
-    //start timer!
+    // start timer!
     updateTimeout();
     frame_count = 0;
     break;
@@ -145,8 +146,8 @@ void tNKETopline::setState(State state)
 void tNKETopline::sendDevice(uint16_t data)
 {
   m_send_count++;
-  m_serialTx.write((data >> 8) & 0xFF, PARITY_SPACE);
-  m_serialTx.write(data & 0xFF, PARITY_SPACE);
+  m_serialTx.write((data >> 8) & 0xFF, EspSoftwareSerial::PARITY_SPACE);
+  m_serialTx.write(data & 0xFF, EspSoftwareSerial::PARITY_SPACE);
 }
 
 // todo make init care about "_ or high parity !!"
@@ -296,21 +297,21 @@ void tNKETopline::handle_channel()
 
   if (count >= 3)
   {
-      //send all messages up the stack
-      Nke::_Message msg;
-      msg.channel = channel;
-      msg.len = 2;
-      //probably faster to do direct assignment
-      memcpy(msg.data, data, 2);
-      BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-      xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
+    // send all messages up the stack
+    Nke::_Message msg;
+    msg.channel = channel;
+    msg.len = 2;
+    // probably faster to do direct assignment
+    memcpy(msg.data, data, 2);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
     count = 0;
   }
 }
 
 void tNKETopline::handle_bx()
 {
-  //What are in these messages ? .. Timer ? position ? 
+  // What are in these messages ? .. Timer ? position ?
   switch (channel)
   {
   case 0xb9:
@@ -330,19 +331,33 @@ void tNKETopline::handle_bx()
 
 void tNKETopline::handle_functions()
 {
-  //send all fc messages up in the system
+  // send all fc messages up in the system
   if (count == 5)
   {
-      Nke::_Message msg;
-      msg.channel = channel;
-      msg.len = 4;
-      memcpy(msg.data, data, 4);
-      BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-      xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
+    Nke::_Message msg;
+    msg.channel = channel;
+    msg.len = 4;
+    memcpy(msg.data, data, 4);
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xQueueSendFromISR(m_rxQueue, &msg, &xHigherPriorityTaskWoken);
   }
-  //we can move the reg setting async but the send needs to stay for both fc and f1
+  // we can move the reg setting async but the send needs to stay for both fc and f1
   switch (channel)
   {
+    // New init sequence / sequence is updated
+  case 0xf0:
+    // if it really is a new init sequence deal with it
+    if (count == 2 && data[0] == 0x2)
+    {
+      Serial.printf("INIT Detected Runtime\n");
+      expected = start;
+      detect = false;
+      detected = 0xFF;
+      detect_count = 0;
+      setState(State::INIT);
+      init(data[0]);
+    }
+    break;
   case 0xf4:
     // F4 means WRITE!!!
     if (count == 5)
@@ -396,7 +411,7 @@ void tNKETopline::handle_functions()
       {
         sendDevice(dev->version());
         // why the 0x40 ?
-        m_serialTx.write(0x40, PARITY_SPACE);
+        m_serialTx.write(0x40, EspSoftwareSerial::PARITY_SPACE);
       }
     }
     if (count == 5)
@@ -429,11 +444,11 @@ void tNKETopline::sendFx(const Nke::_Message &msg)
   if (msg.len > 0)
   {
     // i have no idea if this is correct
-    m_serialTx.write(msg.channel, PARITY_MARK);
+    m_serialTx.write(msg.channel, EspSoftwareSerial::PARITY_MARK);
     for (auto i = 0; i < msg.len; i++)
     {
       // send data not as "controller"
-      m_serialTx.write(msg.data[i], PARITY_SPACE);
+      m_serialTx.write(msg.data[i], EspSoftwareSerial::PARITY_SPACE);
     }
     // for(auto &c : msg.data)
   }
@@ -444,8 +459,8 @@ void tNKETopline::handle_controllers()
   // auto id = data[0];
   if (count == 1)
   {
-    //if our controller ID is the state we are in send message..
-    //currently we only sopport one controller / slave id.. should be enough
+    // if our controller ID is the state we are in send message..
+    // currently we only sopport one controller / slave id.. should be enough
     auto dev = m_dev_table[channel];
     if (dev != nullptr)
     {
@@ -526,8 +541,8 @@ void tNKETopline::inter_frame(uint8_t byte)
     if (count == 3)
     {
       // debug_frame("bx :");
-      //Serial.printf("bx %02x, %02x, %02x\n", cmd, data[0], data[1]);
-      //We need to figure out what BX os
+      // Serial.printf("bx %02x, %02x, %02x\n", cmd, data[0], data[1]);
+      // We need to figure out what BX os
       function_count++;
       count = 0;
     }
@@ -587,7 +602,7 @@ void tNKETopline::inter_frame(uint8_t byte)
       {
         sendDevice(dev->version());
         // why the 0x40 ?
-        m_serialTx.write(0x40, PARITY_SPACE);
+        m_serialTx.write(0x40, EspSoftwareSerial::PARITY_SPACE);
       }
     }
     if (count == 5)
@@ -637,7 +652,6 @@ void tNKETopline::inter_frame(uint8_t byte)
     setState(State::FRAME);
     return;
   }
-
 }
 void tNKETopline::print_buf()
 {
@@ -697,7 +711,11 @@ void tNKETopline::receiveByte(uint8_t byte)
     break;
   case State::FRAME:
     channel_decoder(byte);
-    updateTimeout();
+    if (m_state == State::FRAME)
+    {
+      // dont update if state has changed
+      updateTimeout();
+    }
     // frame(byte);
     break;
   case State::INTER_FRAME:

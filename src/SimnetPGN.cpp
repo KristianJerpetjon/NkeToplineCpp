@@ -1,4 +1,4 @@
-#include "SimnetPGN.hpp"
+#include "include/SimnetPGN.hpp"
 
 // PGN6305 has many modes
 //  Todo handle different modes in this object!! painful

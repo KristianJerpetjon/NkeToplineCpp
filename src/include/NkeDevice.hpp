@@ -6,7 +6,7 @@
 
 // maybe not the right sollution
 #include <N2kMessages.h>
-
+#include "NkeChannel.hpp"
 #include "NkeBridge.hpp"
 
 static inline uint16_t charToUint16(uint8_t *data)
@@ -75,7 +75,7 @@ namespace Nke
   {
   public:
     WaterTemp(NkeBridge &bridge)
-        : NkeDevice(0x31, 1, 1), m_bridge(bridge) // todo force in nkedevice ?
+        : NkeDevice((uint8_t)Nke::Channel::WATER_TEMP, 1, 1), m_bridge(bridge) // todo force in nkedevice ?
     {
       // default offset is 1000 range is 55.5 to 55.5 .. maybe this is the value of the 05 reg ?
       reg[0] = 1000;
@@ -150,7 +150,7 @@ namespace Nke
   {
   public:
     BoatSpeed(NkeBridge &bridge)
-        : NkeDevice(0x3a, 3, 7, 0x18), m_bridge(bridge)
+        : NkeDevice((uint8_t)Nke::Channel::BS_AVG, 3, 7, (uint8_t)Nke::Channel::BS_FAST), m_bridge(bridge)
     {
       // default offset is 100 (0-10 with 1000 steps and 1 beeing 100)
       reg[0] = 1000; // this is the standard offset range is -5.38 + 5.38? where 0 is 0 and 5.38 is 2000
@@ -196,7 +196,7 @@ namespace Nke
   {
   public:
     WindSpeed(NkeBridge &bridge)
-        : NkeDevice(0x3b, 1, 1, 0x15), m_bridge(bridge)
+        : NkeDevice((uint8_t)Nke::Channel::AWS_AVG, 1, 1, (uint8_t)Nke::Channel::AWS_FAST), m_bridge(bridge)
     {
       // default offset is 100 (0-10 with 1000 steps and 1 beeing 100)
       reg[0] = 0; // this is the standard offset range is -5.38 + 5.38? where 0 is 0 and 5.38 is 2000
@@ -234,14 +234,14 @@ namespace Nke
   class WindAngle : public NkeDevice
   {
   public:
-    WindAngle(NkeBridge &bridge) : NkeDevice(0x3c, 1, 0), m_bridge(bridge) {}
+    WindAngle(NkeBridge &bridge) : NkeDevice((uint8_t)Nke::Channel::AWA, 1, 0), m_bridge(bridge) {}
     uint16_t data() override
     {
-      //we could store the const ref to wind angle.. and make it faster as it executes in interrupt context
+      // we could store the const ref to wind angle.. and make it faster as it executes in interrupt context
       return m_bridge.windAngle().Nke();
-      //return uint16_t(RadToDeg(m_bridge.windAngle()));
-      // const double pi = 3.141592;
-      // double rad = ((heading * pi) / 180.0);
+      // return uint16_t(RadToDeg(m_bridge.windAngle()));
+      //  const double pi = 3.141592;
+      //  double rad = ((heading * pi) / 180.0);
       /*double sum;
       for (auto &s : samples)
       {
@@ -256,4 +256,38 @@ namespace Nke
     // const double pi = 3.141592;
     //  double rad = ((heading * pi) / 180.0);
   };
+
+  // can i somehow map this better
+  class Sog : public NkeDevice
+  {
+  public:
+    Sog(NkeBridge &bridge) : NkeDevice((uint8_t)Nke::Channel::SOG, 1, 0), m_bridge(bridge)
+    {
+    }
+
+    uint16_t data() override
+    {
+      return m_bridge.speedOverGround().Nke();
+    }
+
+  private:
+    NkeBridge &m_bridge;
+  };
+
+  class Cog : public NkeDevice
+  {
+  public:
+    Cog(NkeBridge &bridge) : NkeDevice((uint8_t)Nke::Channel::COG, 1, 0), m_bridge(bridge)
+    {
+    }
+
+    uint16_t data() override
+    {
+      return m_bridge.courseOverGround().Nke();
+    }
+
+  private:
+    NkeBridge &m_bridge;
+  };
+
 };
