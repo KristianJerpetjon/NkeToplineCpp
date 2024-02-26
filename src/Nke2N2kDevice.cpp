@@ -212,7 +212,10 @@ static const std::unordered_map<unsigned long, std::shared_ptr<N2kNkeHandler>> N
     {130310L, std::make_shared<HandleWaterTemp>(bridge)},
     {130306L, std::make_shared<HandleWindSpeed>(bridge)},
     {129025L, std::make_shared<HandlePosition>(bridge)},
-    {129026L, std::make_shared<HandleCogSog>(bridge)}};
+    {129026L, std::make_shared<HandleCogSog>(bridge)},
+    {129285L, std::make_shared<HandleNavigationData>(bridge)},
+    {129283L, std::make_shared<HandleXte>(bridge)},
+    {129285, std::make_shared<HandleWp>(bridge)}};
 
 // need to look at unordered map for fast pgn lookup
 void HandleNMEA2000Msg(const tN2kMsg &N2kMsg)
@@ -507,6 +510,10 @@ void ApLoop(void *pvParameters)
                     } });*/
 
                 // NkeTopline.addHandler(st::make_shared<NkeHandler>({}));
+            }
+            if (data.startsWith("channels"))
+            {
+                NkeTopline.printChannels();
             }
             if (data == "+1")
             {
@@ -845,6 +852,9 @@ void setup()
     NkeTopline.addDevice(cog);
     auto sog = std::make_shared<Nke::Sog>(bridge);
     NkeTopline.addDevice(sog);
+
+    auto xte = std::make_shared<Nke::Xte>(bridge);
+    NkeTopline.addDevice(xte);
 
     // this lambda goes to die..
     // N2KHandlers[128259L] = speed->handleN2kData;/*[speed_ptr = speed.get()](const tN2kMsg &N2kMsg)

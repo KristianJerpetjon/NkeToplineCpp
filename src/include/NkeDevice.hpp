@@ -290,4 +290,19 @@ namespace Nke
     NkeBridge &m_bridge;
   };
 
+  class Xte : public NkeDevice
+  {
+  public:
+    Xte(NkeBridge &bridge) : NkeDevice((uint8_t)Nke::Channel::XTE, 1, 0), m_bridge(bridge)
+    {
+    }
+    uint16_t data() override
+    {
+      return m_bridge.xte().Nke();
+    }
+
+  private:
+    NkeBridge &m_bridge;
+  };
+
 };

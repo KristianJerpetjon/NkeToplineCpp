@@ -12,8 +12,6 @@
 #include <map>
 #include <memory>
 
-
-
 #ifndef NKE_TOPLINE_SERIAL
 #define NKE_TOPLINE_SERIAL Serial2
 #endif
@@ -32,8 +30,7 @@
 class tNKETopline
 {
 public:
-  tNKETopline(HardwareSerial &serial, gpio_num_t  rxpin , gpio_num_t  txpin );
-
+  tNKETopline(HardwareSerial &serial, gpio_num_t rxpin, gpio_num_t txpin);
 
   enum class State
   {
@@ -69,6 +66,29 @@ public:
     // also at a rate < 3ms per message its not a biggie
   }
 
+  void printChannels()
+  {
+    Serial.printf("detected : ");
+    for (uint8_t i = 0; i < 0xFF; i++)
+    {
+      if (m_detected_channels[i] != 0)
+      {
+        Serial.printf("%02x ", i);
+      }
+    }
+    Serial.printf("\n");
+
+    Serial.printf("main channels : ");
+    for (uint8_t i = 0; i < 0xFF; i++)
+    {
+      if (m_controller_channels[i] != 0)
+      {
+        Serial.printf("%02x ", i);
+      }
+    }
+    Serial.printf("\n");
+  }
+
   // TODO make thread safe
   void addDevice(std::shared_ptr<NkeDevice> dev)
   {
@@ -95,7 +115,7 @@ public:
                       (TickType_t)0) == pdPASS;
   }
 
-  unsigned long sendCount() {return m_send_count; }
+  unsigned long sendCount() { return m_send_count; }
   unsigned long receiveCount() { return m_receive_count; }
   bool isConnceted() { return m_state == State::FRAME; }
 
@@ -105,7 +125,7 @@ private:
 
   std::vector<std::function<void(const Nke::_Message &)>> msgHandlers;
 
-  //removing this as we want to pick up messages that arent only to ourselves
+  // removing this as we want to pick up messages that arent only to ourselves
   std::array<NkeDevice *, 256> m_dev_table{};
   // std::array<uint8_t, 256> m_handler_table{};
 
@@ -114,7 +134,7 @@ private:
   void setState(State s);
   void init(uint8_t data);
   void frame(uint8_t data);
-  void inter_frame(uint8_t data);
+  // void inter_frame(uint8_t data);
   void print_buf();
   void sendDevice(uint16_t data);
   // void find_sync(uint8_t data);
@@ -126,12 +146,17 @@ private:
   EspSoftwareSerial::UART m_serialTx;
 
   State m_state = State::UNKNOWN;
-  gpio_num_t  m_rxpin;
-  gpio_num_t  m_txpin;
+  gpio_num_t m_rxpin;
+  gpio_num_t m_txpin;
   QueueHandle_t m_rxQueue;
   QueueHandle_t m_cmdQueue;
 
   std::vector<uint8_t> m_detected;
+  std::vector<uint8_t> m_controller;
+
+  std::array<uint8_t, 256> m_controller_channels;
+  std::array<uint8_t, 256> m_detected_channels;
+  void clear();
 
   RingBuf<uint8_t, 512> buf;
 
@@ -153,8 +178,8 @@ private:
   void handle_controllers();
   void sendFx(const Nke::_Message &msg);
   uint8_t channel;
-  unsigned long m_timeout; //timer to reset to UNKNOWN state if bus is inactive for 1 second
-  void updateTimeout(const unsigned long &timeout=1000); //default 1 second timeout
+  unsigned long m_timeout;                                 // timer to reset to UNKNOWN state if bus is inactive for 1 second
+  void updateTimeout(const unsigned long &timeout = 1000); // default 1 second timeout
   bool isTimeout();
 
   // These are moved from init to be able to reset init if new init sequence F0 is detected!
@@ -167,6 +192,6 @@ private:
   uint8_t detected = 0xFF;
   int detect_count = 0;
 
-  unsigned long m_send_count=0;
-  unsigned long m_receive_count=0;
+  unsigned long m_send_count = 0;
+  unsigned long m_receive_count = 0;
 };

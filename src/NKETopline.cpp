@@ -10,6 +10,17 @@
 tNKETopline::tNKETopline(HardwareSerial &serial, gpio_num_t rxpin, gpio_num_t txpin)
     : m_serial(serial), m_rxpin(rxpin), m_txpin(txpin), m_rxQueue(xQueueCreate(128, sizeof(Nke::_Message))), m_cmdQueue(xQueueCreate(128, sizeof(Nke::_Message)))
 {
+  clear();
+}
+
+void tNKETopline::clear()
+{
+  // set controller and detect channels to zero
+  for (auto i = 0; i < 255; i++)
+  {
+    m_controller_channels[i] = 0;
+    m_detected_channels[i] = 0;
+  }
 }
 
 // TODO evaluate if running only SWSerial makes more sense
@@ -125,6 +136,13 @@ void tNKETopline::setState(State state)
   switch (state)
   {
   case State::INIT:
+    expected = start;
+    detect = false;
+    detected = 0xFF;
+    detect_count = 0;
+    clear();
+    m_detected.clear(); // clear out old detections
+    m_controller.clear();
     updateTimeout(10000); // wait up to 10 seconds for init sequence
     break;
   case State::INTER_FRAME:
@@ -157,6 +175,7 @@ void tNKETopline::init(uint8_t byte)
   {
     detect = false;
     m_detected.push_back(detected);
+    m_detected_channels[detected] = 1;
   }
   else if (byte == expected)
   {
@@ -285,6 +304,16 @@ void tNKETopline::handle_channel()
   if (count == 1)
   {
     auto dev = m_dev_table[channel];
+
+    // detect channels from controller vs detections
+    if (m_detected_channels[channel] == 0)
+    {
+      if (m_controller_channels[channel] == 0)
+      {
+        m_controller_channels[channel] = 1;
+      }
+    }
+
     // TODO send out side of interrupt handler
     if (dev != nullptr)
     {
@@ -297,6 +326,7 @@ void tNKETopline::handle_channel()
 
   if (count >= 3)
   {
+
     // send all messages up the stack
     Nke::_Message msg;
     msg.channel = channel;
@@ -350,10 +380,6 @@ void tNKETopline::handle_functions()
     if (count == 2 && data[0] == 0x2)
     {
       Serial.printf("INIT Detected Runtime\n");
-      expected = start;
-      detect = false;
-      detected = 0xFF;
-      detect_count = 0;
       setState(State::INIT);
       init(data[0]);
     }
@@ -518,6 +544,8 @@ void tNKETopline::channel_decoder(uint8_t byte, int mark)
   }
 }
 
+/*
+
 void tNKETopline::inter_frame(uint8_t byte)
 {
   if (count == 0)
@@ -653,6 +681,7 @@ void tNKETopline::inter_frame(uint8_t byte)
     return;
   }
 }
+*/
 void tNKETopline::print_buf()
 {
   int count = 0;
@@ -688,10 +717,6 @@ void tNKETopline::receiveByte(uint8_t byte)
     if (prev == 0xF0 && byte == 0x02)
     {
       Serial.printf("INIT Detected\n");
-      expected = start;
-      detect = false;
-      detected = 0xFF;
-      detect_count = 0;
       setState(State::INIT);
       init(byte);
       break;
@@ -710,18 +735,14 @@ void tNKETopline::receiveByte(uint8_t byte)
     init(byte);
     break;
   case State::FRAME:
+    updateTimeout();
     channel_decoder(byte);
-    if (m_state == State::FRAME)
-    {
-      // dont update if state has changed
-      updateTimeout();
-    }
-    // frame(byte);
     break;
-  case State::INTER_FRAME:
-    inter_frame(byte);
-    break;
-  /*case State::FUNCTION:
+    /* case State::INTER_FRAME:
+       inter_frame(byte);
+       break;
+   */
+    /*case State::FUNCTION:
     function(data);
     break;*/
   case State::FAIL:

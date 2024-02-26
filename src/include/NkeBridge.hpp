@@ -59,6 +59,34 @@ public:
     // RadToDeg(m_bridge.windAngle())
 };
 
+class Xte : public NkeN2kData
+{
+public:
+    void setN2k(const double &n2k) override
+    {
+        int16_t tmp = static_cast<int16_t>(n2k / 18.52); // compute to 100*nautical miles
+        int16_t tmp2 = 1000 + tmp;
+        if (tmp2 < 0)
+        {
+            tmp2 = 0;
+        }
+        if (tmp2 > 2000)
+        {
+            tmp2 = 2000;
+        }
+        m_val_nke = tmp2;
+        m_val_n2k = n2k;
+    }
+    void setNke(const uint16_t &nke) override
+    {
+        // convert to +-
+        int16_t tmp = nke - 1000;
+
+        m_val_n2k = tmp * 18.52;
+        m_val_nke = nke;
+    }
+};
+
 class SOG : public NkeN2kData
 {
 public:
@@ -68,7 +96,11 @@ public:
         // sog is m/s * 100 for n2k.
         // Serial.printf("SetSog to %f\n", n2k);
         m_val_n2k = n2k;
-        m_val_nke = (n2k * 500.0);
+        // m_val_nke = (n2k * 500.0);
+        // nke is 190 per knot meaning its 1900m/h / 190 => 10m/h steps
+        // each step is 0.000277778 m/s
+        // is it 190 or 185.2 :manshrugging:
+        m_val_nke = (n2k * 3.6 * 190);
 
         //  m_val_nke = static_cast<uint16_t>(n2k * (180 / M_PI)); // uint16_t(DegToRad(n2k)); // this need to be verified at some point
         //  m_val_n2k = n2k;
@@ -76,7 +108,7 @@ public:
     void setNke(const uint16_t &nke) override
     {
         // m_val_n2k = nke * (M_PI / 180.0);
-        m_val_n2k = (nke / 500.0);
+        m_val_n2k = (nke / 3.6 * 190);
         m_val_nke = nke;
     }
     // RadToDeg(m_bridge.windAngle())
@@ -298,9 +330,14 @@ public:
     void setPosition(double lat, double lng) { m_position.setN2kPos(lat, lng); }
     void setPosition(uint16_t val, uint8_t chan) { m_position.setNkePos(val, chan); }
 
+    const Xte &xte() { return m_xte; }
+    void setXte(double val) { m_xte.setN2k(val); }
+    void setXte(uint16_t val) { m_xte.setNke(val); }
+
 private:
     double m_boatSpeed = 0.0; // knots
     SOG m_speedOverGround;
+    Xte m_xte;
     // double m_speedOverGround = 0.0; // knots
     double m_windSpeed = 0.0; // knots
     NkeN2kAngle m_windAngle;

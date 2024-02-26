@@ -255,6 +255,110 @@ public:
     }
 };
 
+class HandleXte : public N2kNkeHandler
+{
+public:
+    HandleXte(NkeBridge &bridge) : N2kNkeHandler(bridge) {}
+    void handleN2kData(const tN2kMsg &N2kMsg) override
+    {
+        unsigned char SID;
+        tN2kXTEMode XTEMode;
+        bool NavigationTerminated;
+        double XTE;
+        if (ParseN2kXTE(N2kMsg, SID, XTEMode, NavigationTerminated, XTE))
+        {
+            // TODO do what if (NavigationTerminated)
+            // XTE is in 0.01m
+            // guess the conversion in this case is to meters ?
+            // Serial.printf("Xte %dm %f Nm\n", (int)XTE, XTE / 1852);
+            if (!N2kIsNA(XTE))
+            {
+                m_bridge.setXte(XTE);
+            }
+
+            /*
+            enum tN2kXTEMode  {
+                            N2kxtem_Autonomous=0,     ///< autonomous mode
+                            N2kxtem_Differential=1,   ///< differential mode
+                            N2kxtem_Estimated=2,      ///< estimated mode
+                            N2kxtem_Simulator=3,      ///< simulator mode
+                            N2kxtem_Manual=4          ///< manual mode
+                          };*/
+        }
+    }
+};
+
+// XTE : 129283 Navigation Data : 129284 WP Information : 129285
+//  129284
+class HandleNavigationData : public N2kNkeHandler
+{
+public:
+    HandleNavigationData(NkeBridge &bridge) : N2kNkeHandler(bridge) {}
+    void handleN2kData(const tN2kMsg &N2kMsg) override
+    {
+        // switch(N2kMsg)
+        // an about 50 parameters
+        unsigned char SID;
+        double DistanceToWaypoint;
+        tN2kHeadingReference BearingReference;
+        bool PerpendicularCrossed;
+        bool ArrivalCircleEntered;
+        tN2kDistanceCalculationType CalculationType;
+        double ETATime;
+        int16_t ETADate;
+        double BearingOriginToDestinationWaypoint;
+        double BearingPositionToDestinationWaypoint;
+        uint32_t OriginWaypointNumber;
+        uint32_t DestinationWaypointNumber;
+        double DestinationLatitude;
+        double DestinationLongitude;
+        double WaypointClosingVelocity;
+        if (ParseN2kNavigationInfo(N2kMsg, SID, DistanceToWaypoint, BearingReference, PerpendicularCrossed, ArrivalCircleEntered, CalculationType,
+                                   ETATime, ETADate, BearingOriginToDestinationWaypoint, BearingPositionToDestinationWaypoint,
+                                   OriginWaypointNumber, DestinationWaypointNumber, DestinationLatitude, DestinationLongitude, WaypointClosingVelocity))
+        {
+            Serial.printf("Distance to WP %f\n", DistanceToWaypoint);
+        }
+    };
+};
+
+class HandleWp : public N2kNkeHandler
+{
+public:
+    HandleWp(NkeBridge &bridge) : N2kNkeHandler(bridge) {}
+    void handleN2kData(const tN2kMsg &N2kMsg) override
+    {
+
+        if (N2kMsg.PGN == 129285)
+        {
+            int index = 0;
+            uint16_t start = N2kMsg.Get2ByteUInt(index);
+            uint16_t count = N2kMsg.Get2ByteUInt(index);
+            uint16_t db_id = N2kMsg.Get2ByteUInt(index);
+            uint16_t route_id = N2kMsg.Get2ByteUInt(index);
+            uint8_t nav_sup = N2kMsg.GetByte(index);
+            uint8_t reserved1 = N2kMsg.GetByte(index);
+            if (N2kMsg.GetStr(256, buffer, 256, '\0', index))
+            {
+                printf("WP Name %s\n", buffer);
+            }
+            uint8_t reserved2 = N2kMsg.GetByte(index);
+            /*
+                        for (auto i = 0; i < count; i++)
+                        {
+                            // WP id, str name, lat long
+                        }*/
+
+            // just get the first item
+
+            // index = 10;
+        }
+    }
+
+private:
+    char buffer[256];
+};
+
 /*
     //  case 129026UL: HandleCOGSOG(N2kMsg);
     //  case 129029UL: HandleGNSS(N2kMsg);
