@@ -202,7 +202,7 @@ double heading = 0;
 
 #include <unordered_map>
 
-std::unique_ptr<NavicoAp> m_navico;
+std::shared_ptr<NavicoAp> m_navico;
 
 NkeBridge bridge;
 
@@ -246,7 +246,7 @@ TaskHandle_t TaskNke;
 TaskHandle_t TaskN2k;
 TaskHandle_t TaskAp;
 
-std::unique_ptr<AutopilotController> m_auto;
+std::shared_ptr<Nke::AutopilotController> m_auto;
 
 int m_id = 1;
 
@@ -684,7 +684,10 @@ void setup()
     NMEA2000.ExtendTransmitMessages(TransmitMessages0, m_id);
     NMEA2000.ExtendReceiveMessages(ReceiveMessages0, m_id);
 
-    m_navico = std::unique_ptr<NavicoAp>(new NavicoAp(NMEA2000, bridge, id + 1, 0));
+    // create the Nke Autopilot Controller
+    m_auto = std::make_shared<Nke::AutopilotController>(NkeTopline, bridge);
+    // create the Simnet Ap Emulator
+    m_navico = std::make_shared<NavicoAp>(NMEA2000, m_auto, bridge, id + 1, 0);
 
     // Uncomment 2 rows below to see, what device will send to bus. Use e.g. OpenSkipper or Actisense NMEA Reader
     // Serial.begin(115200);
@@ -954,7 +957,6 @@ void setup()
 
     // add auto pilot controller!
     // m_auto=std::make_unique<AutopilotController(NkeTopline,bridge); //id is hard coded to 0x2.. maybe we need to work on that
-    m_auto = std::unique_ptr<AutopilotController>(new AutopilotController(NkeTopline, bridge));
 
     NMEA2000.SetOnOpen(OnN2kOpen);
     NkeTopline.Open();

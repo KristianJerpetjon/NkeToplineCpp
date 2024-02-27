@@ -109,225 +109,237 @@ enum class PilotEnabled : uint8_t
 };
 
 // the above could be coded as a bytestring with channel reg value as 4 bytes
-
-class AutopilotController : public Controller
+namespace Nke
 {
-public:
-    AutopilotController(tNKETopline &topline, NkeBridge &bridge, uint8_t controller_id = 0x2, uint8_t apMode = 0x4F, uint8_t apControl = 0x4e)
-        : Controller(topline, controller_id), m_bridge(bridge), m_channel_mode(apMode), m_channel_control(apControl) {}
-
-    void handleMessage(const Nke::_Message &msg) override
+    class AutopilotController : public Controller
     {
-        // async read replies
-        if (msg.channel == 0xfc && msg.len == 4)
-        {
-            // pilot is responding on Control channel
-            if (msg.data[0] == m_channel_control)
-            {
-                switch (static_cast<ControlRegs>(msg.data[1]))
-                {
-                case ControlRegs::OnOffReg:
-                    m_pilot_enabled = static_cast<PilotEnabled>(msg.data[2] << 8 | msg.data[3]);
-                    break;
-                default:
-                    Serial.printf("Unknown ControlReg %02x\n", msg.data[1]);
-                }
-                /*switch (msg.data[1])
-                {
-                    case
-                }*/
+    public:
+        AutopilotController(tNKETopline &topline, NkeBridge &bridge, uint8_t controller_id = 0x2, uint8_t apMode = 0x4F, uint8_t apControl = 0x4e)
+            : Controller(topline, controller_id), m_bridge(bridge), m_channel_mode(apMode), m_channel_control(apControl) {}
 
-                // m_channel_control, to_integral(ControlRegs::OnOffReg)
+        void handleMessage(const Nke::_Message &msg) override
+        {
+            // async read replies
+            if (msg.channel == 0xfc && msg.len == 4)
+            {
+                // pilot is responding on Control channel
+                if (msg.data[0] == m_channel_control)
+                {
+                    switch (static_cast<ControlRegs>(msg.data[1]))
+                    {
+                    case ControlRegs::OnOffReg:
+                        m_pilot_enabled = static_cast<PilotEnabled>(msg.data[2] << 8 | msg.data[3]);
+                        break;
+                    default:
+                        Serial.printf("Unknown ControlReg %02x\n", msg.data[1]);
+                    }
+                    /*switch (msg.data[1])
+                    {
+                        case
+                    }*/
+
+                    // m_channel_control, to_integral(ControlRegs::OnOffReg)
+                }
+
+                if (msg.data[0] == m_channel_mode)
+                {
+                    switch (static_cast<PilotRegs>(msg.data[1]))
+                    {
+                    case PilotRegs::ModeReg:
+                        // in theory only msg.data[3] affects this! but lets ignore that fact for now
+                        m_mode = static_cast<PilotMode>(msg.data[2] << 8 | msg.data[3]);
+                        break;
+                    case PilotRegs::Target:
+                        // read back current setting after setting it..
+                        // we should compare but in this case we also get the ref when another controller sets it
+
+                        m_target = static_cast<uint16_t>(msg.data[2] << 8 | msg.data[3]);
+                        break;
+                    default:
+                        Serial.printf("Unknown PilotReg %02x\n", msg.data[1]);
+                        break;
+                    }
+                }
             }
 
-            if (msg.data[0] == m_channel_mode)
+            if (msg.channel == static_cast<uint8_t>(Nke::Channel::PILOT_STATE))
             {
-                switch (static_cast<PilotRegs>(msg.data[1]))
-                {
-                case PilotRegs::ModeReg:
-                    // in theory only msg.data[3] affects this! but lets ignore that fact for now
-                    m_mode = static_cast<PilotMode>(msg.data[2] << 8 | msg.data[3]);
-                    break;
-                case PilotRegs::Target:
-                    // read back current setting after setting it..
-                    // we should compare but in this case we also get the ref when another controller sets it
-
-                    m_target = static_cast<uint16_t>(msg.data[2] << 8 | msg.data[3]);
-                    break;
-                default:
-                    Serial.printf("Unknown PilotReg %02x\n", msg.data[1]);
-                    break;
-                }
+                // 0x5 idle, 0x3 GPS , 0 compass, 1 aparent wind, 2 rudder
+                uint8_t pilot_state = msg.data[1];
             }
         }
-    }
 
-    void setPilotMode(const PilotMode &mode)
-    {
-        // uint16_t ret_value;
-        write(m_channel_mode, to_integral(PilotRegs::ModeReg), to_integral(mode));
-        read(m_channel_mode, to_integral(PilotRegs::ModeReg));
-    }
-
-    // this requires read modify write!!
-    void change(int change)
-    {
-        // this probably fails as some targets are %360..
-        //  if (change < 0)
-        //  {
-        // m_target = m_target + change;
-
-        switch (m_mode)
+        void setPilotMode(const PilotMode &mode)
         {
-        case PilotMode::Rudder:
-            m_target = (m_target + 360 + change) % 360;
-            break;
+            // uint16_t ret_value;
+            write(m_channel_mode, to_integral(PilotRegs::ModeReg), to_integral(mode));
+            read(m_channel_mode, to_integral(PilotRegs::ModeReg));
         }
-        //   }
-        /* else
-         {
-             m_target = m_target + change;
-         }*/
-        write(m_channel_mode, to_integral(PilotRegs::Target), m_target);
-        read(m_channel_mode, to_integral(PilotRegs::Target));
-        /*   if (change < 0)
-           {
-               subtract change
-           }*/
-        // read 0x11 and subtract valyue
-    }
 
-    void setGain(uint8_t gain)
-    {
-        if (gain < 9)
+        // this requires read modify write!!
+        void change(int change)
         {
-            // apply
+            // this probably fails as some targets are %360..
+            //  if (change < 0)
+            //  {
+            // m_target = m_target + change;
+
+            switch (m_mode)
+            {
+            case PilotMode::Rudder:
+                m_target = (m_target + 360 + change) % 360;
+                break;
+            }
+            //   }
+            /* else
+             {
+                 m_target = m_target + change;
+             }*/
+            write(m_channel_mode, to_integral(PilotRegs::Target), m_target);
+            read(m_channel_mode, to_integral(PilotRegs::Target));
+            /*   if (change < 0)
+               {
+                   subtract change
+               }*/
+            // read 0x11 and subtract valyue
         }
-    }
 
-    uint8_t gain()
-    {
-    }
-
-    void start()
-    {
-        // start autopilot... aparent is 33 ish deg
-        // read mode
-        // read mode
-        // write aparent wind angle!! which is 305 (as in 305-360 => -55 ) //get this from NkeBridge data
-        // veirfy aparent wind angle
-
-        read(m_channel_mode, to_integral(PilotRegs::ModeReg));
-        read(m_channel_mode, to_integral(PilotRegs::ModeReg));
-        // about the time it should take to hit a frame and get the response need to run controller in dedicated thread!!
-        // std::this_thread::sleep_for(100ms);
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-
-        // uint16_t value = 0;
-        switch (m_mode)
+        void setGain(uint8_t gain)
         {
-        case PilotMode::Aparent:
-            m_target = m_bridge.windAngle().Nke();
-            break;
-        case PilotMode::Rudder:
-            m_target = m_bridge.rudderAngle().Nke() / 3;
-            break;
-        case PilotMode::Compass:
-            m_target = m_bridge.heading().Nke();
-            break;
+            if (gain < 9)
+            {
+                // apply
+            }
         }
-        // write it twice.. no idea why
-        write(m_channel_mode, to_integral(PilotRegs::Target), m_target);
-        write(m_channel_mode, to_integral(PilotRegs::Target), m_target);
 
-        // get Ap state
-        read(m_channel_control, to_integral(ControlRegs::OnOffReg));
-        read(m_channel_control, to_integral(ControlRegs::OnOffReg));
-
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-        // std::this_thread::sleep_for(100ms);
-
-        write(m_channel_control, to_integral(ControlRegs::OnOffReg), to_integral(PilotEnabled::True));
-
-        // this needs a function to give up
-        uint8_t retries = 10;
-        while (m_pilot_enabled != PilotEnabled::True && retries > 0)
+        uint8_t gain()
         {
-            read(m_channel_control, to_integral(ControlRegs::OnOffReg));
+        }
+
+        void start()
+        {
+            // start autopilot... aparent is 33 ish deg
+            // read mode
+            // read mode
+            // write aparent wind angle!! which is 305 (as in 305-360 => -55 ) //get this from NkeBridge data
+            // veirfy aparent wind angle
+
+            read(m_channel_mode, to_integral(PilotRegs::ModeReg));
+            read(m_channel_mode, to_integral(PilotRegs::ModeReg));
+            // about the time it should take to hit a frame and get the response need to run controller in dedicated thread!!
+            // std::this_thread::sleep_for(100ms);
             vTaskDelay(100 / portTICK_PERIOD_MS);
 
+            // uint16_t value = 0;
+            switch (m_mode)
+            {
+            case PilotMode::Aparent:
+                m_target = m_bridge.windAngle().Nke();
+                break;
+            case PilotMode::Rudder:
+                m_target = m_bridge.rudderAngle().Nke() / 3;
+                break;
+            case PilotMode::Compass:
+                m_target = m_bridge.heading().Nke();
+                break;
+            case PilotMode::GPS:
+                m_target = m_bridge.btw().Nke();
+                break;
+            }
+            // write it once and read back target..
+            write(m_channel_mode, to_integral(PilotRegs::Target), m_target);
+            read(m_channel_mode, to_integral(PilotRegs::Target));
+            // write(m_channel_mode, to_integral(PilotRegs::Target), m_target);
+
+            // get Ap state
+            read(m_channel_control, to_integral(ControlRegs::OnOffReg));
+            read(m_channel_control, to_integral(ControlRegs::OnOffReg));
+
+            vTaskDelay(100 / portTICK_PERIOD_MS);
             // std::this_thread::sleep_for(100ms);
-            retries--;
+
+            write(m_channel_control, to_integral(ControlRegs::OnOffReg), to_integral(PilotEnabled::True));
+
+            // this needs a function to give up
+            uint8_t retries = 10;
+            while (m_pilot_enabled != PilotEnabled::True && retries > 0)
+            {
+                read(m_channel_control, to_integral(ControlRegs::OnOffReg));
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+
+                // std::this_thread::sleep_for(100ms);
+                retries--;
+            }
+
+            // if (mode X get wind angle y etc.. we need to know the mode..)
+            // switch()
+            //
+
+            // write(m_channel_mode, PilotRegs::Target, )
+            /*
+                        cmd 03 fc 4f code 01 00 01
+
+                        cmd 03 fc 4f code 01 00 01
+
+                        cmd 03 f4 4f code 11 01 31
+
+                        cmd 03 fc 4f code 11 01 31
+
+                        cmd 03 fc 4e code 10 00 60
+                        cmd 03 fc 4e code 10 00 60
+                        cmd 03 f4 4e code 10 00 61
+                        cmd 03 fc 4e code 10 00 61
+                        cmd 03 fc 4e code 10 00 61
+                        cmd 03 fc 4e code 10 00 61
+
+            */
+
+            /*
+            Rudder on off from controller!
+    20:23:02.194 -> DEBUG Read: cmd fc  4f 01 00 02
+     20:23:02.241 -> DEBUG Read: cmd fc  4f 01 00 02
+     20:23:02.241 -> DEBUG write: cmd f4  4f 11 01 66
+     20:23:02.272 -> DEBUG Read: cmd fc  4f 11 01 66
+     20:23:02.272 -> Unknown PilotReg 11
+     20:23:02.319 -> DEBUG Read: cmd fc  4e 10 00 60
+     20:23:02.358 -> DEBUG Read: cmd fc  4e 10 00 60
+     20:23:02.395 -> DEBUG write: cmd f4  4e 10 00 61
+     20:23:02.427 -> DEBUG Read: cmd fc  4e 10 00 61
+     20:23:02.474 -> DEBUG Read: cmd fc  4e 10 00 61
+     20:23:02.520 -> DEBUG Read: cmd fc  4e 10 00 61
+     20:23:04.655 -> DEBUG Read: cmd fc  4e 10 00 61
+     20:23:04.700 -> DEBUG Read: cmd fc  4e 10 00 61
+     20:23:04.700 -> DEBUG write: cmd f4  4e 10 00 60
+     20:23:04.779 -> DEBUG Read: cmd fc  4e 10 00 60
+
+            */
+        }
+        /*
+        cmd   03 fc 4e code  10 00 61
+        cmd   03 fc 4e code  10 00 61
+        cmd   03 f4 4e code  10 00 60
+        cmd   03 fc 4e code  10 00 60
+        */
+        void stop()
+        {
+            // read read write then read
+            read(m_channel_control, to_integral(ControlRegs::OnOffReg));
+            read(m_channel_control, to_integral(ControlRegs::OnOffReg));
+            // guess if its off we dont continue here..
+            write(m_channel_control, to_integral(ControlRegs::OnOffReg), to_integral(PilotEnabled::False));
+            read(m_channel_control, to_integral(ControlRegs::OnOffReg)); // make sure it went off
         }
 
-        // if (mode X get wind angle y etc.. we need to know the mode..)
-        // switch()
-        //
+        // todo impl a get pilot mode
 
-        // write(m_channel_mode, PilotRegs::Target, )
-        /*
-                    cmd 03 fc 4f code 01 00 01
-
-                    cmd 03 fc 4f code 01 00 01
-
-                    cmd 03 f4 4f code 11 01 31
-
-                    cmd 03 fc 4f code 11 01 31
-
-                    cmd 03 fc 4e code 10 00 60
-                    cmd 03 fc 4e code 10 00 60
-                    cmd 03 f4 4e code 10 00 61
-                    cmd 03 fc 4e code 10 00 61
-                    cmd 03 fc 4e code 10 00 61
-                    cmd 03 fc 4e code 10 00 61
-
-        */
-
-        /*
-        Rudder on off from controller!
-20:23:02.194 -> DEBUG Read: cmd fc  4f 01 00 02
- 20:23:02.241 -> DEBUG Read: cmd fc  4f 01 00 02
- 20:23:02.241 -> DEBUG write: cmd f4  4f 11 01 66
- 20:23:02.272 -> DEBUG Read: cmd fc  4f 11 01 66
- 20:23:02.272 -> Unknown PilotReg 11
- 20:23:02.319 -> DEBUG Read: cmd fc  4e 10 00 60
- 20:23:02.358 -> DEBUG Read: cmd fc  4e 10 00 60
- 20:23:02.395 -> DEBUG write: cmd f4  4e 10 00 61
- 20:23:02.427 -> DEBUG Read: cmd fc  4e 10 00 61
- 20:23:02.474 -> DEBUG Read: cmd fc  4e 10 00 61
- 20:23:02.520 -> DEBUG Read: cmd fc  4e 10 00 61
- 20:23:04.655 -> DEBUG Read: cmd fc  4e 10 00 61
- 20:23:04.700 -> DEBUG Read: cmd fc  4e 10 00 61
- 20:23:04.700 -> DEBUG write: cmd f4  4e 10 00 60
- 20:23:04.779 -> DEBUG Read: cmd fc  4e 10 00 60
-
-        */
-    }
-    /*
-    cmd   03 fc 4e code  10 00 61
-    cmd   03 fc 4e code  10 00 61
-    cmd   03 f4 4e code  10 00 60
-    cmd   03 fc 4e code  10 00 60
-    */
-    void stop()
-    {
-        // read read write then read
-        read(m_channel_control, to_integral(ControlRegs::OnOffReg));
-        read(m_channel_control, to_integral(ControlRegs::OnOffReg));
-        // guess if its off we dont continue here..
-        write(m_channel_control, to_integral(ControlRegs::OnOffReg), to_integral(PilotEnabled::False));
-        read(m_channel_control, to_integral(ControlRegs::OnOffReg)); // make sure it went off
-    }
-
-    // todo impl a get pilot mode
-
-private:
-    NkeBridge &m_bridge;
-    // need to see if you can support multiple controllers.. dont think so.
-    // are these static in nke ?
-    uint8_t m_channel_mode;
-    uint8_t m_channel_control;
-    PilotMode m_mode;
-    uint16_t m_target; // the current control target
-    PilotEnabled m_pilot_enabled;
+    private:
+        NkeBridge &m_bridge;
+        // need to see if you can support multiple controllers.. dont think so.
+        // are these static in nke ?
+        uint8_t m_channel_mode;
+        uint8_t m_channel_control;
+        PilotMode m_mode;
+        uint16_t m_target; // the current control target
+        PilotEnabled m_pilot_enabled;
+    };
 };

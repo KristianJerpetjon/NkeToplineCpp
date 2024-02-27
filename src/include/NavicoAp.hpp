@@ -4,6 +4,7 @@
 
 #include <deque>
 #include "NkeBridge.hpp"
+#include "NkeAutopilot.hpp"
 
 #include "SimnetPGN.hpp"
 
@@ -76,11 +77,14 @@ const unsigned long NavicoApRecieveMessages[] PROGMEM = {
 
 // todo rename to SIMNET_AP!!
 // TODO make an abstract N2kAp..
+// Todo Make an abstract AP .. for all types.
+// Maybe ApInterface ?
+
 class NavicoAp
 {
 public:
-    NavicoAp(tNMEA2000 &n2k, NkeBridge &bridge, uint32_t uid, int dev_id)
-        : m_n2k(n2k), m_bridge(bridge), m_scheduler(false, 1000, 100)
+    NavicoAp(tNMEA2000 &n2k, std::shared_ptr<Nke::AutopilotController> pilot, NkeBridge &bridge, uint32_t uid, int dev_id)
+        : m_n2k(n2k), m_pilot(pilot), m_bridge(bridge), m_scheduler(false, 1000, 100)
           // every 25ms see if we should send a fast packet ...
           ,
           m_fast_scheduler(false, 25, 10), m_uid(uid), m_dev_id(dev_id)
@@ -152,15 +156,15 @@ public:
 
         if (N2kMsg.PGN == SIMNET_COMISSION)
         {
-          int index=0;
-          uint16_t top = N2kMsg.Get2ByteUInt(index);
-          printf("Manufacturer %d\n", top & 0x7FF);
-          printf("Device Type %d\n", top >> 13 & 0x7);
+            int index = 0;
+            uint16_t top = N2kMsg.Get2ByteUInt(index);
+            printf("Manufacturer %d\n", top & 0x7FF);
+            printf("Device Type %d\n", top >> 13 & 0x7);
 
-          unsigned char Target = N2kMsg.GetByte(index);
-          printf("Target %d\n",Target);
+            unsigned char Target = N2kMsg.GetByte(index);
+            printf("Target %d\n", Target);
 
-          Serial.printf("Received simnet commission from %d with len %d\n", N2kMsg.Source, N2kMsg.DataLen);
+            Serial.printf("Received simnet commission from %d with len %d\n", N2kMsg.Source, N2kMsg.DataLen);
         }
         // switch(PGNS) to handle
         if (N2kMsg.PGN == SIMRAD_AP_PGN)
@@ -171,12 +175,12 @@ public:
             uint8_t model = N2kMsg.GetByte(index);
             uint8_t mode = N2kMsg.GetByte(index);
 
-            switch (static_cast<SimnetApMsgType>(mode))
+            switch (static_cast<Simnet::ApMsgType>(mode))
             {
-            case SimnetApMsgType::ModeRequest:
+            case Simnet::ApMsgType::ModeRequest:
                 sendMode();
                 break;
-            case SimnetApMsgType::StatusRequest:
+            case Simnet::ApMsgType::StatusRequest:
                 sendStatus();
                 break;
             default:
@@ -267,45 +271,63 @@ public:
 */
             // Serial.printf("Bytes %d\n", N2kMsg.DataLen);
             //  lets asume this is 11 bytes.. long.. no idea if that asumption is correct..
-            printMsg(N2kMsg);
+            Simnet::printMsg(N2kMsg);
 
             if (N2kMsg.DataLen == 12) // why is len 12 for 11 bytes ?
             {
                 uint8_t address;
-                SimnetCommand cmd;
-                SimnetApDirection direction;
-                SimnetApMode mode;
-                SimnetApStatus status;
-                SimnetApCommand apcmd;
+                Simnet::Command cmd;
+                Simnet::ApDirection direction;
+                Simnet::ApMode mode;
+                Simnet::ApStatus status;
+                Simnet::ApCommand apcmd;
                 double angle;
                 ParsePgn130850Ap(N2kMsg, address, cmd, status, apcmd, direction, angle);
 
                 switch (apcmd)
                 {
-                case SimnetApCommand::Standby: // 6 set standby
+                case Simnet::ApCommand::Standby: // 6 set standby
+                    Serial.printf("Set Mode Standby\n");
+                    m_pilot->stop();
                     setEngaged(false);
                     break;
-                case SimnetApCommand::Auto: // TODO rename to HeadingHold or just Heading
+                case Simnet::ApCommand::Auto: // TODO rename to HeadingHold or just Heading
                     Serial.printf("Set Mode Heading\n");
                     m_angle = m_bridge.heading().N2k();
-                    m_mode = ApMode::Heading;
+                    m_mode = Simnet::ApState::Heading;
+                    m_pilot->setPilotMode(PilotMode::Compass);
+                    m_pilot->start();
                     setEngaged(true);
                     break;
-                case SimnetApCommand::Wind:
+                case Simnet::ApCommand::Wind:
+                    Serial.printf("Set Mode Wind\n");
+
                     m_angle = m_bridge.windAngle().N2k();
-                    m_mode = ApMode::Wind;
+                    m_mode = Simnet::ApState::Wind;
+                    m_pilot->setPilotMode(PilotMode::Aparent);
+                    m_pilot->start();
                     setEngaged(true);
                     break;
-                case SimnetApCommand::CourseChange:
+                case Simnet::ApCommand::Nav:
+                    Serial.printf("Set Mode Nav\n");
+
+                    m_angle = m_bridge.windAngle().N2k();
+                    m_mode = Simnet::ApState::Nav;
+                    m_pilot->setPilotMode(PilotMode::GPS);
+                    m_pilot->start();
+                    setEngaged(true);
+                    break;
+                case Simnet::ApCommand::CourseChange:
                     switch (direction)
                     {
                         // maybe we should use integer radian precision instead of double!
-                    case SimnetApDirection::Port:
+                    case Simnet::ApDirection::Port:
+                        // if (angle == 0xd106)
                         //+10 d106 (06d1) which is 1745 with precision 0.0001 thats 0.1745 which is 10 degrees in radians
                         //+1 ae00 (00ae) = 174 with precision 0.0001 thats 0.0174 which is 1 degree in radians
                         m_angle -= angle;
                         break;
-                    case SimnetApDirection::Starboard:
+                    case Simnet::ApDirection::Starboard:
                         m_angle += angle;
                         break;
                     }
@@ -314,7 +336,7 @@ public:
 
                     break;
                     // what is this issued both on standby and on auto before .. standby and auto msg
-                case SimnetApCommand::NotifyController: // Dont thing this is the command
+                case Simnet::ApCommand::NotifyController: // Dont thing this is the command
                     // maybe we should reply the angle?
                     // printMsg(N2kMsg);
 
@@ -322,11 +344,14 @@ public:
                     {
                         switch (m_mode)
                         {
-                        case ApMode::Wind:
+                        case Simnet::ApState::Wind:
                             m_angle = m_bridge.windAngle().N2k();
                             break;
-                        case ApMode::Heading:
+                        case Simnet::ApState::Heading:
                             m_angle = m_bridge.heading().N2k();
+                            break;
+                        case Simnet::ApState::Nav:
+                            m_angle = m_bridge.btw().N2k();
                             break;
                         }
 
@@ -441,9 +466,9 @@ public:
             // send 81 then set on internally
             // send 80 once on internally
             tN2kMsg EightOne;
-            SetSimnetStatusChange(EightOne, SimnetApChange::REQ);
+            SetSimnetStatusChange(EightOne, Simnet::ApChange::REQ);
             tN2kMsg EightZero;
-            SetSimnetStatusChange(EightZero, SimnetApChange::REP);
+            SetSimnetStatusChange(EightZero, Simnet::ApChange::REP);
             m_replies.push_back(EightOne);
             m_replies.push_back(EightZero);
             m_engaged = engaged;
@@ -469,13 +494,13 @@ public:
     */
     // same as above but encoded as 8 bit
     // i am guessing there are more.. like Forced rudder TrueWind.. etc
-    enum class ApMode : uint8_t
-    {
-        Heading = 2,
-        Wind = 3,
-        Nav = 10,
-        NoDrift = 11
-    };
+    /* enum class ApMode : uint8_t
+     {
+         Heading = 2,
+         Wind = 3,
+         Nav = 10,
+         NoDrift = 11
+     };*/
 
     // LOOKUP(SIMNET_DEVICE_REPORT, 10, "Mode")
     // LOOKUP(SIMNET_DEVICE_REPORT, 11, "Send Mode")
@@ -493,8 +518,8 @@ public:
     {
         if (m_scheduler.IsTime())
         {
-            // sendStatus();
-            // sendMode();
+            sendStatus();
+            sendMode();
             sendAngle();
             sendMore();
             // sendReply();
@@ -525,7 +550,7 @@ private:
 
     void sendN2kMsg(tN2kMsg &msg)
     {
-        //printMsg(msg);
+        // printMsg(msg);
 
         m_n2k.SendMsg(msg, m_dev_id);
     }
@@ -553,12 +578,12 @@ private:
         tN2kMsg msg;
         if (m_engaged)
         {
-            SetSimnetStatus(msg, SimnetApStatus::Automatic);
+            SetSimnetStatus(msg, Simnet::ApStatus::Automatic);
             // SimnetApStatus::Automatic;
         }
         else
         {
-            SetSimnetStatus(msg, SimnetApStatus::Manual);
+            SetSimnetStatus(msg, Simnet::ApStatus::Manual);
         }
         m_replies.push_back(msg);
         // m_n2k.SendMsg(msg, m_dev_id);
@@ -578,14 +603,14 @@ private:
         {
             switch (m_mode)
             {
-            case ApMode::Heading:
-                SetSimnetMode(msg, SimnetApMode::Heading);
+            case Simnet::ApState::Heading:
+                SetSimnetMode(msg, Simnet::ApMode::Heading);
                 break;
-            case ApMode::Wind:
-                SetSimnetMode(msg, SimnetApMode::Wind);
+            case Simnet::ApState::Wind:
+                SetSimnetMode(msg, Simnet::ApMode::Wind);
                 break;
-            case ApMode::Nav:
-                SetSimnetMode(msg, SimnetApMode::Nav);
+            case Simnet::ApState::Nav:
+                SetSimnetMode(msg, Simnet::ApMode::Nav);
                 break;
             default:
                 Serial.printf("Unknown ApMode %d\n", m_mode);
@@ -593,7 +618,7 @@ private:
         }
         else
         {
-            SetSimnetMode(msg, SimnetApMode::Standby);
+            SetSimnetMode(msg, Simnet::ApMode::Standby);
         }
         /*}
         else
@@ -624,152 +649,29 @@ private:
     void sendAngle()
     {
         tN2kMsg msg1;
-        // if we emulate AC42 we should send PGN65340
-        if (m_engaged)
-        {
-            switch (m_mode)
-            {
-            case ApMode::Heading:
-                SetPGN65340(msg1, SimnetMode::Heading);
-                break;
-            case ApMode::Wind:
-                SetPGN65340(msg1, SimnetMode::Wind);
-                break;
-            case ApMode::Nav:
-                SetPGN65340(msg1, SimnetMode::Navigation);
-                break;
+        // if we emulate AC42 we should send PGN65340 and PGN65341 but in which cases should we not send them
 
-            default:
-                Serial.printf("Not sending PGN65340 \n");
-            }
-        }
-        else
-        {
-            SetPGN65340(msg1, SimnetMode::Standby);
-        }
-        // printMsg(msg1);
-
+        SetPGN65340(msg1, m_mode);
         m_replies.push_back(msg1);
 
-        // SIMNET_AP_STATUS
-        //   tN2kMsg msg1;
-        //    6 byte status msg
-        //    msg1.SetPGN(SIMNET_AP_STATUS);
-        //    msg1.Priority = 3;
-        //    msg.Add2ByteUInt(1857);
-        //    msg1.AddByte(0xff);                          // broadcast
-        //    msg1.AddByte(34);                            // length or PGN address ?
-        //    msg1.Add2ByteUInt(1857 | (0x4 << (11 + 2))); // manufacturer
-        /*if (m_mode == Mode::Standby)
-        {
-            msg1.AddByte(0x00); // length or AP id ?
-        }
-        else
-        {
-            msg1.AddByte(0x10); // length or AP id ? //0A for 65302
-        }
-        switch (m_mode)
-        {
-        case Mode::Standby:
-            msg1.AddByte(0x00);
-            msg1.AddByte(0xFE);
-            msg1.AddByte(0xF8);
-            break;
-        case Mode::Heading:
-            msg1.AddByte(0x1);
-            msg1.AddByte(0xFE);
-            msg1.AddByte(0xFA);
-            break;
-        case Mode::Wind:
-            msg1.AddByte(0x3);
-            msg1.AddByte(0xFE);
-            msg1.AddByte(0xFA);
-            break;
-
-        case Mode::Nav:
-            msg1.AddByte(0x06);
-            msg1.AddByte(0xFE);
-            msg1.AddByte(0xFA);
-            break;
-        }
-
-        msg1.AddByte(0x00);
-        msg1.AddByte(0x80);
-
-        m_n2k.SendMsg(msg1, m_dev_id);*/
-        // only send when active
-
-        // Reports the heading or apparent wind angle dependent on the autopilot mode
-        // mode 03 02 and 0b         NoDrift = 11
         if (m_engaged)
         {
             tN2kMsg msg;
-
-            switch (m_mode)
-            {
-            case ApMode::Wind:
-            case ApMode::Heading:
-            case ApMode::NoDrift:
-            {
-                // 6 byte status msg
-                msg.SetPGN(SIMNET_AP_ANGLE);
-                // msg.SetPGN(65431UL);
-                msg.Priority = 6;
-                // msg.Add2ByteUInt(1857);
-                msg.Add2ByteUInt(1857 | 0x8000 /*Maritime id*/ | 0x1800 /*reserved*/);
-
-                // uint16_t simnet_id = 1857;
-                // msg.Add2ByteUInt(simnet_id | 0x8000);
-
-                msg.Add2ByteUInt(0xFFFF); // reserved
-
-                msg.AddByte(static_cast<uint8_t>(m_mode)); // AP_MODE so probably need to store that)
-                msg.AddByte(0xFF);                         // reserved
-                msg.Add2ByteDouble(m_angle, 0.0001);
-                // Serial.printf("Sending Angle %f\n", m_angle);
-                /*
-                        msg.AddByte(0);                                // 0 for AC and 1 for something                             // model AC 100 for NAC 1 for other.. probably all work
-                        msg.AddByte(static_cast<uint8_t>(TYPE::Mode)); //
-                        msg.Add2ByteUInt(static_cast<uint16_t>(m_mode));
-
-                        // msg.AddByte(static_cast<uint16_t>(m_mode));
-                        //  msg.Add2ByteDouble(bridge.rudderAngle().N2k(), 0.0001);
-                        //  msg.Add2ByteDouble(bridge.rudderAngle().N2k(), 0.0001);
-                        msg.AddByte(0xff); // Reserved
-                        msg.AddByte(0xff); // Reserved
-                        // msg.AddByte(0xff); // Reserved
-                        // msg.AddByte(0xff); // Reserved
-                */
-                // sendN2kMsg(msg);
-                m_replies.push_back(msg);
-            }
-            break;
-            default:
-                break;
-            }
+            SetPGN65341(msg, m_mode, m_angle);
+            m_replies.push_back(msg);
         }
 
         //  m_n2k.SendMsg(msg, m_dev_id);
     }
-    /*
-        void sendReply()
-        {
-            while (!m_replies.empty())
-            {
-                // auto rep = m_replies.front();
-                Serial.printf("SendingReply\n");
-                m_n2k.SendMsg(m_replies.front(), m_dev_id);
-                m_replies.pop_front();
-            }
-        }
-    */
+
     tN2kSyncScheduler m_scheduler;
     tN2kSyncScheduler m_fast_scheduler;
 
     uint32_t m_uid;
     int m_dev_id;
     // software mode state!
-    ApMode m_mode = ApMode::Heading;
+    // rename to m_state ?
+    Simnet::ApState m_mode = Simnet::ApState::Heading;
 
     // Status m_status = Status::Automatic;
     //  SimnetStatus m_mode = Mode::Standby;
@@ -782,6 +684,9 @@ private:
     double m_angle = 0.00;
 
     bool m_engaged = false;
+    // Todo make AbstractPilot
+    // Todo get status etc from AbstractPilot
+    std::shared_ptr<Nke::AutopilotController> m_pilot;
 };
 
 /*
