@@ -305,4 +305,35 @@ namespace Nke
     NkeBridge &m_bridge;
   };
 
+  // think i can replace all these with some oneliner lambdas!!
+  class Dtw : public NkeDevice
+  {
+  public:
+    Dtw(NkeBridge &bridge) : NkeDevice((uint8_t)Nke::Channel::DTW, 1, 0), m_bridge(bridge)
+    {
+    }
+    uint16_t data() override
+    {
+      return m_bridge.dtw().Nke();
+    }
+
+  private:
+    NkeBridge &m_bridge;
+  };
+
+  class Ctw : public NkeDevice
+  {
+  public:
+    Ctw(NkeBridge &bridge) : NkeDevice((uint8_t)Nke::Channel::CTW, 1, 0), m_bridge(bridge)
+    {
+    }
+    uint16_t data() override
+    {
+      return m_bridge.btw().Nke();
+    }
+
+  private:
+    NkeBridge &m_bridge;
+  };
+
 };

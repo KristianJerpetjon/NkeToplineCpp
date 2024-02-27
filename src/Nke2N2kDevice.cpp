@@ -206,16 +206,18 @@ std::unique_ptr<NavicoAp> m_navico;
 
 NkeBridge bridge;
 
-// map for handlers of NkeDevices
-static const std::unordered_map<unsigned long, std::shared_ptr<N2kNkeHandler>> N2kHandlers = {
-    {128259L, std::make_shared<HandleBoatSpeed>(bridge)},
-    {130310L, std::make_shared<HandleWaterTemp>(bridge)},
-    {130306L, std::make_shared<HandleWindSpeed>(bridge)},
-    {129025L, std::make_shared<HandlePosition>(bridge)},
-    {129026L, std::make_shared<HandleCogSog>(bridge)},
-    {129285L, std::make_shared<HandleNavigationData>(bridge)},
-    {129283L, std::make_shared<HandleXte>(bridge)},
-    {129285, std::make_shared<HandleWp>(bridge)}};
+// XTE : 129283 Navigation Data : 129284 WP Information : 129285
+//  map for handlers of NkeDevices
+static const std::unordered_map<unsigned long, std::shared_ptr<N2kNkeHandler>>
+    N2kHandlers = {
+        {128259L, std::make_shared<HandleBoatSpeed>(bridge)},
+        {130310L, std::make_shared<HandleWaterTemp>(bridge)},
+        {130306L, std::make_shared<HandleWindSpeed>(bridge)},
+        {129025L, std::make_shared<HandlePosition>(bridge)},
+        {129026L, std::make_shared<HandleCogSog>(bridge)},
+        {129284L, std::make_shared<HandleNavigationData>(bridge)},
+        {129283L, std::make_shared<HandleXte>(bridge)},
+        {129285L, std::make_shared<HandleWp>(bridge)}};
 
 // need to look at unordered map for fast pgn lookup
 void HandleNMEA2000Msg(const tN2kMsg &N2kMsg)
@@ -855,6 +857,12 @@ void setup()
 
     auto xte = std::make_shared<Nke::Xte>(bridge);
     NkeTopline.addDevice(xte);
+
+    auto dtw = std::make_shared<Nke::Dtw>(bridge);
+    NkeTopline.addDevice(dtw);
+
+    auto ctw = std::make_shared<Nke::Ctw>(bridge);
+    NkeTopline.addDevice(ctw);
 
     // this lambda goes to die..
     // N2KHandlers[128259L] = speed->handleN2kData;/*[speed_ptr = speed.get()](const tN2kMsg &N2kMsg)

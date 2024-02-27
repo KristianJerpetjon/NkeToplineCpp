@@ -317,7 +317,19 @@ public:
                                    ETATime, ETADate, BearingOriginToDestinationWaypoint, BearingPositionToDestinationWaypoint,
                                    OriginWaypointNumber, DestinationWaypointNumber, DestinationLatitude, DestinationLongitude, WaypointClosingVelocity))
         {
-            Serial.printf("Distance to WP %f\n", DistanceToWaypoint);
+            // Serial.printf("Distance to WP %d\n", (int)DistanceToWaypoint / 1852);
+            if (!N2kIsNA(DistanceToWaypoint))
+            {
+                m_bridge.setDtw(DistanceToWaypoint);
+            }
+            if (BearingReference == tN2kHeadingReference::N2khr_true)
+            {
+                // Serial.printf("Course to WP %d\n", (int)((BearingPositionToDestinationWaypoint * 180) / M_PI));
+                if (!N2kIsNA(BearingPositionToDestinationWaypoint))
+                {
+                    m_bridge.setBtw(BearingPositionToDestinationWaypoint);
+                }
+            }
         }
     };
 };

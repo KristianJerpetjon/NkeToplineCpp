@@ -87,6 +87,23 @@ public:
     }
 };
 
+class Dtw : public NkeN2kData
+{
+public:
+    // distance to waypoint in integer value meters
+    void setN2k(const double &n2k) override
+    {
+        m_val_nke = static_cast<uint8_t>(n2k / 185.2); // (meters /1852)*10 ..presented in 0.1 steps
+        m_val_n2k = n2k;
+    }
+    // distance to waypoint integer value in nautical miles div 10
+    void setNke(const uint16_t &nke) override
+    {
+        m_val_n2k = nke * 185.2;
+        m_val_nke = nke;
+    }
+};
+
 class SOG : public NkeN2kData
 {
 public:
@@ -330,14 +347,27 @@ public:
     void setPosition(double lat, double lng) { m_position.setN2kPos(lat, lng); }
     void setPosition(uint16_t val, uint8_t chan) { m_position.setNkePos(val, chan); }
 
+    // Off track to waypoint
     const Xte &xte() { return m_xte; }
     void setXte(double val) { m_xte.setN2k(val); }
     void setXte(uint16_t val) { m_xte.setNke(val); }
+
+    // Bearing to waypoint
+    const NkeN2kAngle &btw() { return m_btw; }
+    void setBtw(double val) { m_btw.setN2k(val); }
+    void setBtw(uint16_t val) { m_btw.setNke(val); }
+
+    // Distance to waypoint
+    const Dtw &dtw() { return m_dtw; }
+    void setDtw(double val) { m_dtw.setN2k(val); }
+    void setDtw(uint16_t val) { m_dtw.setNke(val); }
 
 private:
     double m_boatSpeed = 0.0; // knots
     SOG m_speedOverGround;
     Xte m_xte;
+    NkeN2kAngle m_btw;
+    Dtw m_dtw;
     // double m_speedOverGround = 0.0; // knots
     double m_windSpeed = 0.0; // knots
     NkeN2kAngle m_windAngle;
